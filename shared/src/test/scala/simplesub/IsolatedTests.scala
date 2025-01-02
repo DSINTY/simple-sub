@@ -12,7 +12,8 @@ class IsolatedTests extends TypingTestHelpers {
     
     //  doTest("{ f = 42 }", "{f: int}")
     //   doTest("{ f = 42 }.f", "int")
-    doTest("(fun x -> x.f) { f = 42 }")
+    // doTest("(fun x -> x.f) { f = 42 }")
+    doTest("fun x -> x 42")
     
     
   }

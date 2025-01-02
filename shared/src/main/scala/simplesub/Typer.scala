@@ -333,13 +333,13 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     // }
     
 
-    // println("M")
-    // for (i <- 0 until numNodes) {
-    //   for (j <- 0 until numNodes) {
-    //     print(Mu(i)(j) + " ")
-    //   }
-    //   println()
-    // }
+    println("M")
+    for (i <- 0 until numNodes) {
+      for (j <- 0 until numNodes) {
+        print(Mu(i)(j) + " ")
+      }
+      println()
+    }
 
     
     // val Mupow = Array.fill(numNodes)(Mu)
