@@ -18,12 +18,26 @@ class TypingTestHelpers extends AnyFunSuite {
     val Success(term, index) = parse(str, expr(_), verboseFailures = true)
     
     val typer = new Typer(dbg) with TypeSimplifier
-    val tyv = typer.inferType(term)
+    val (tyv,vars) = typer.inferType(term)
+    println("variables:" +vars)
+    
     
     if (dbg) {
       println("inferred: " + tyv)
       println(" where " + tyv.showBounds)
+      // println("inferred: " + tyv2)
+      // println(" where " + tyv2.showBounds)
     }
+
+    typer.transitiveClosure(tyv,vars)
+    if (dbg) {
+      println("after transitive closure")
+      println("inferred: " + tyv)
+      println(" where " + tyv.showBounds)
+      // println("inferred: " + tyv2)
+      // println(" where " + tyv2.showBounds)
+    }
+
     val cty = typer.canonicalizeType(tyv)
     if (dbg) println("compacted: " + cty)
     val sty = typer.simplifyType(cty)
@@ -43,7 +57,7 @@ class TypingTestHelpers extends AnyFunSuite {
     }
   }
   def error(str: String, msg: String): Unit = {
-    assert(intercept[TypeError](doTest(str, "<none>")).msg == msg); ()
+    assert(intercept[TypeError](doTest(str, "")).msg == msg); ()
   }
   
 }
