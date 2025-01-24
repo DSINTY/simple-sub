@@ -1,10 +1,12 @@
 package simplesub
 
 import scala.collection.mutable
+import scala.collection.mutable.Stack
 import scala.collection.mutable.{Map => MutMap, Set => MutSet}
 import scala.collection.immutable.{SortedSet, SortedMap}
 import scala.util.chaining._
 import scala.annotation.tailrec
+import javax.management.openmbean.SimpleType
 
 final case class TypeError(msg: String) extends Exception(msg)
 
@@ -31,6 +33,19 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       PolymorphicType(0, Function(BoolType, Function(v, Function(v, v))))
     }
   )
+
+  val symbolMap: MutMap[String, Int]= MutMap(
+    "R" -> 0,
+    "S" -> 1,
+    "empty" -> 2,
+    "f_in(" -> 3,
+    "f_in)" -> 4,
+    "f_out(" -> 5,
+    "f_out)" -> 6,
+    "rev" -> 7,
+  )
+
+  val fieldSet: MutSet[String] = MutSet.empty[String]
   
   /** The main type inference function */
   def inferTypes(pgrm: Pgrm, ctx: Ctx = builtins): List[Either[TypeError, PolymorphicType]] =
@@ -42,48 +57,213 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       case Nil => Nil
     }
   
-  def inferType(term: Term, ctx: Ctx = builtins, lvl: Int = 0): SimpleType = typeTerm(term)(ctx, lvl)
+  def inferType(term: Term, ctx: Ctx = builtins, lvl: Int = 0): (SimpleType, MutSet[(SimpleType, Int, SimpleType)], MutSet[(SimpleType)]) = typeTerm(term)(ctx, lvl)
   
   /** Infer the type of a let binding right-hand side. */
   def typeLetRhs(isrec: Boolean, nme: String, rhs: Term)(implicit ctx: Ctx, lvl: Int): PolymorphicType = {
     val res = if (isrec) {
       val e_ty = freshVar(lvl + 1)
-      val ty = typeTerm(rhs)(ctx + (nme -> e_ty), lvl + 1)
+      val ty = typeTerm(rhs)(ctx + (nme -> e_ty), lvl + 1)._1
       constrain(ty, e_ty)
       e_ty
-    } else typeTerm(rhs)(ctx, lvl + 1)
+    } else typeTerm(rhs)(ctx, lvl + 1)._1
     PolymorphicType(lvl, res)
   }
   
   /** Infer the type of a term. */
-  def typeTerm(term: Term)(implicit ctx: Ctx, lvl: Int): SimpleType = {
+  def typeTerm(term: Term)(implicit ctx: Ctx, lvl: Int, rels: MutSet[(SimpleType, Int, SimpleType)] = MutSet.empty[(SimpleType,Int,SimpleType)], types: MutSet[(SimpleType)]=MutSet[SimpleType](BoolType, IntType)): (SimpleType, MutSet[(SimpleType, Int, SimpleType)], MutSet[(SimpleType)]) = {
     lazy val res = freshVar
-    term match {
+    
+    val tyv = term match {
       case Var(name) =>
         ctx.getOrElse(name, err("identifier not found: " + name)).instantiate
       case Lam(name, body) =>
         val param = freshVar
-        val body_ty = typeTerm(body)(ctx + (name -> param), lvl)
+        val body_ty = typeTerm(body)(ctx + (name -> param), lvl)._1
+        rels += ((param, symbolMap("f_in("), Function(param, body_ty)))
+        rels += ((body_ty, symbolMap("f_out("), Function(param, body_ty)))
+        rels += ((Function(param, body_ty), symbolMap("f_in)"), param))
+        rels += ((Function(param, body_ty), symbolMap("f_out)"), body_ty))
+        types += param
+        types += body_ty
         Function(param, body_ty)
       case App(f, a) =>
-        val f_ty = typeTerm(f)
-        val a_ty = typeTerm(a)
-        constrain(f_ty, Function(a_ty, res))
+        val f_ty = typeTerm(f)._1
+        val a_ty = typeTerm(a)._1
+        rels += ((f_ty, symbolMap("empty"), Function(a_ty, res)))
         res
       case Lit(n) =>
         IntType
       case Sel(obj, name) =>
-        val obj_ty = typeTerm(obj)
-        constrain(obj_ty, Record((name, res) :: Nil))
+        val obj_ty = typeTerm(obj)._1
+        rels += ((obj_ty, symbolMap("empty"), Record(List(name -> res))))
         res
       case Rcd(fs) =>
-        Record(fs.map { case (n, t) => (n, typeTerm(t)) })
+        val fs_ty = fs.map { case (n, t) => (n, typeTerm(t)._1) }
+        val ty = Record(fs_ty)
+        fs_ty.foreach { case (n, t) => 
+          var openSym = 0
+          var closeSym = 0
+          if (symbolMap.contains("rec_" + n + "(")) 
+          {
+            openSym = symbolMap("rec_" + n + "(")
+            closeSym = symbolMap("rec_" + n + ")")
+          }
+          else
+          {
+            openSym = symbolMap.size
+            symbolMap += ("rec_"+n+"(" -> openSym)
+            closeSym = symbolMap.size
+            symbolMap += ("rec_"+n+")" -> closeSym)
+          }
+          
+          rels += ((t, openSym, ty))
+          rels += ((ty, closeSym, t))
+          types += t
+          
+          fieldSet += n 
+        }
+        ty
       case Let(isrec, nme, rhs, bod) =>
         val n_ty = typeLetRhs(isrec, nme, rhs)
-        typeTerm(bod)(ctx + (nme -> n_ty), lvl)
+        typeTerm(bod)(ctx + (nme -> n_ty), lvl)._1
     }
+    types += tyv
+
+
+    (tyv, rels, types)
+  }
+
+  def opp(sym: String): String = {
+    if (sym=="R") "S"
+    else "R"
   }
   
+  def termSym(sym: String): String = {
+    if (sym=="R") "rev"
+    else "empty"
+  }
+  
+  def cflReach(ty: SimpleType, rels: MutSet[(SimpleType, Int, SimpleType)], types: MutSet[(SimpleType)]): SimpleType = {
+    val rules_1 = MutSet.empty[(Int, Int)]
+    val rules_2 = MutSet.empty[(Int, Int, Int)]
+    val rules_3 = MutSet.empty[(Int, Int, Int, Int)]
+
+    for (N <- Seq("R","S")){
+      val N_sym = symbolMap(N)
+      val N_sym_opp = symbolMap(opp(N))
+      rules_2 += ((N_sym,N_sym, N_sym))
+      rules_1 += ((N_sym,symbolMap(termSym(N))))
+      rules_3 += ((N_sym,symbolMap("f_out("), N_sym, symbolMap("f_out)")))
+      rules_3 += ((N_sym,symbolMap("f_in("), N_sym_opp, symbolMap("f_in)")))
+      for (n<-fieldSet){
+        rules_3 += ((N_sym,symbolMap("rec_"+n+"("), N_sym, symbolMap("rec_"+n+")")))
+      }
+    }
+
+    // initiliaze the adjancency matrix with values -1
+    val adj = Array.fill(types.size, types.size)(-1)
+    // initialize  a stack
+    val W = Stack[(Int, Int, Int)]()
+    val H_s = MutSet[(Int, Int, Int)]()
+    // construct the adjacency matrix
+    val typesSeq = types.toSeq
+    // println("typesSeq: %s\n", typesSeq)
+    rels.foreach{case (lhs, sym, rhs) =>
+      val i = typesSeq.indexOf(lhs)
+      // println("lhs: %s\n", lhs)
+      // println("sym: %s\n", sym)
+      // println("rhs: %s\n", rhs)
+      val j = typesSeq.indexOf(rhs)
+      adj(i)(j) = sym
+      if (sym == symbolMap("empty")) {
+        W.push((i, symbolMap("S"), j))
+        W.push((j, symbolMap("R"), i))
+      }
+      
+    }
+
+    typesSeq.zipWithIndex.foreach{case (ty, i) =>
+      W.push((i, symbolMap("S"), i))
+    }
+
+    H_s ++= W
+
+    while (W.nonEmpty){
+      val (u,sym_B,v) = W.pop()
+      rules_1.foreach{case (sym_A, sym_B1) =>
+        if (sym_B1==sym_B) {
+          W.push((u, sym_A, v))
+          H_s += ((u, sym_A, v))
+        }
+
+      }
+
+      rules_2.foreach{case (sym_A, sym_B1, sym_B2) =>
+        if (sym_B2==sym_B) {
+          for (w<-0 until types.size){
+            if (adj(w)(u)==sym_B1 && !H_s.contains((w, sym_A, v))){
+              W.push((w, sym_A, v))
+              H_s += ((w, sym_A, v))
+            }
+          }
+        }
+
+      }
+
+      rules_2.foreach{case (sym_A, sym_B1, sym_B2) =>
+        if (sym_B1==sym_B) {
+          for (w<-0 until types.size){
+            if (adj(v)(w)==sym_B2 && !H_s.contains((u, sym_A, w))){
+              W.push((u, sym_A, w))
+              H_s += ((u, sym_A, w))
+            }
+          }
+        }
+
+      }
+
+      rules_3.foreach{case (sym_A, sym_O, sym_B1, sym_C) =>
+        if (sym_B1==sym_B) {
+          for (w<-0 until types.size){
+            for (z<-0 until types.size){
+              if (adj(w)(u)==sym_O && adj(v)(z)==sym_C && !H_s.contains((w, sym_A, z))){
+                W.push((w, sym_A, z))
+                H_s += ((w, sym_A, z))
+              }
+            }
+          }
+        }
+
+      }
+    }
+
+    for (i<-0 until types.size){
+      for (j<-0 until types.size){
+        if (H_s.contains((i, symbolMap("S"), j)) ){
+          if (i!=j){
+          // if i is variable
+          if (typesSeq(i).isInstanceOf[Variable]){
+            val v = typesSeq(i).asInstanceOf[Variable]
+            val ty = typesSeq(j)
+            v.upperBounds ::= ty
+          }
+          // if j is variable
+          if (typesSeq(j).isInstanceOf[Variable]){
+            val v = typesSeq(j).asInstanceOf[Variable]
+            val ty = typesSeq(i)
+            v.lowerBounds ::= ty
+          }
+        }
+        }
+      }
+    }
+
+
+
+    ty
+    
+  }
   /** Constrains the types to enforce a subtyping relationship `lhs` <: `rhs`. */
   def constrain(lhs: SimpleType, rhs: SimpleType)
       // we need a cache to remember the subtyping tests in process; we also make the cache remember

@@ -11,6 +11,7 @@ class IsolatedTests extends TypingTestHelpers {
     // put your test here
     
     // doTest("fun f -> fun x -> f (f x)")
+    doTest("fun x -> x 42")
     
   }
   
