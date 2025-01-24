@@ -174,6 +174,13 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     // construct the adjacency matrix
     val typesSeq = types.toSeq
     // println("typesSeq: %s\n", typesSeq)
+
+    for (primType <- Seq(BoolType, IntType)){
+      rels += ((primType, symbolMap("f_in("), Function(primType, primType)))
+      rels += ((Function(primType, primType), symbolMap("f_in)"), primType))
+      rels += ((Function(primType, primType), symbolMap("f_out)"), primType))
+      rels += ((primType, symbolMap("f_out("), Function(primType, primType)))
+    }
     rels.foreach{case (lhs, sym, rhs) =>
       val i = typesSeq.indexOf(lhs)
       // println("lhs: %s\n", lhs)
