@@ -11,7 +11,11 @@ class IsolatedTests extends TypingTestHelpers {
     // put your test here
     
     // doTest("fun f -> fun x -> f (f x)")
-    doTest("fun x -> x 42")
+    doTest("42", "int")
+    doTest("fun x -> 42", "⊤ -> int")
+    doTest("fun x -> x", "'a -> 'a")
+    doTest("fun x -> x 42", "(int -> 'a) -> 'a")
+    doTest("(fun x -> x) 42")
     
   }
   

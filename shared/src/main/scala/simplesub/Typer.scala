@@ -79,7 +79,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         ctx.getOrElse(name, err("identifier not found: " + name)).instantiate
       case Lam(name, body) =>
         val param = freshVar
-        val body_ty = typeTerm(body)(ctx + (name -> param), lvl)._1
+        val body_ty = typeTerm(body)(ctx + (name -> param), lvl, rels, types)._1
         rels += ((param, symbolMap("f_in("), Function(param, body_ty)))
         rels += ((body_ty, symbolMap("f_out("), Function(param, body_ty)))
         rels += ((Function(param, body_ty), symbolMap("f_in)"), param))
@@ -90,7 +90,9 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       case App(f, a) =>
         val f_ty = typeTerm(f)._1
         val a_ty = typeTerm(a)._1
+        types += Function(a_ty, res)
         rels += ((f_ty, symbolMap("empty"), Function(a_ty, res)))
+
         res
       case Lit(n) =>
         IntType
@@ -126,7 +128,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         ty
       case Let(isrec, nme, rhs, bod) =>
         val n_ty = typeLetRhs(isrec, nme, rhs)
-        typeTerm(bod)(ctx + (nme -> n_ty), lvl)._1
+        typeTerm(bod)(ctx + (nme -> n_ty), lvl, rels, types)._1
     }
     types += tyv
 
