@@ -15,7 +15,9 @@ class IsolatedTests extends TypingTestHelpers {
     doTest("fun x -> 42", "⊤ -> int")
     doTest("fun x -> x", "'a -> 'a")
     doTest("fun x -> x 42", "(int -> 'a) -> 'a")
-    doTest("(fun x -> x) 42")
+    doTest("(fun x -> x) 42", "int")
+    doTest("fun f -> fun x -> f (f x)  // twice", "('a ∨ 'b -> 'a) -> 'b -> 'a")
+    doTest("let twice = fun f -> fun x -> f (f x) in twice", "('a ∨ 'b -> 'a) -> 'b -> 'a")
     
   }
   

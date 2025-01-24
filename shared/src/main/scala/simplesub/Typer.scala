@@ -91,6 +91,10 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         val f_ty = typeTerm(f)._1
         val a_ty = typeTerm(a)._1
         types += Function(a_ty, res)
+        rels += ((a_ty, symbolMap("f_in("), Function(a_ty, res)))
+        rels += ((Function(a_ty, res), symbolMap("f_in)"), a_ty))
+        rels += ((Function(a_ty, res), symbolMap("f_out)"), res))
+        rels += ((res, symbolMap("f_out("), Function(a_ty, res)))
         rels += ((f_ty, symbolMap("empty"), Function(a_ty, res)))
 
         res
@@ -163,8 +167,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       }
     }
 
-    // initiliaze the adjancency matrix with values -1
-    val adj = Array.fill(types.size, types.size)(-1)
+    
     // initialize  a stack
     val W = Stack[(Int, Int, Int)]()
     val H_s = MutSet[(Int, Int, Int)]()
@@ -177,10 +180,13 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       // println("sym: %s\n", sym)
       // println("rhs: %s\n", rhs)
       val j = typesSeq.indexOf(rhs)
-      adj(i)(j) = sym
+      // adj(i)(j) = sym
       if (sym == symbolMap("empty")) {
         W.push((i, symbolMap("S"), j))
         W.push((j, symbolMap("R"), i))
+      }
+      else{
+        W.push((i, sym, j))
       }
       
     }
@@ -204,7 +210,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       rules_2.foreach{case (sym_A, sym_B1, sym_B2) =>
         if (sym_B2==sym_B) {
           for (w<-0 until types.size){
-            if (adj(w)(u)==sym_B1 && !H_s.contains((w, sym_A, v))){
+            if (H_s.contains((w,sym_B1,u)) && !H_s.contains((w, sym_A, v))){
               W.push((w, sym_A, v))
               H_s += ((w, sym_A, v))
             }
@@ -216,7 +222,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       rules_2.foreach{case (sym_A, sym_B1, sym_B2) =>
         if (sym_B1==sym_B) {
           for (w<-0 until types.size){
-            if (adj(v)(w)==sym_B2 && !H_s.contains((u, sym_A, w))){
+            if (H_s.contains(v,sym_B2,w) && !H_s.contains((u, sym_A, w))){
               W.push((u, sym_A, w))
               H_s += ((u, sym_A, w))
             }
@@ -229,7 +235,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         if (sym_B1==sym_B) {
           for (w<-0 until types.size){
             for (z<-0 until types.size){
-              if (adj(w)(u)==sym_O && adj(v)(z)==sym_C && !H_s.contains((w, sym_A, z))){
+              if (H_s.contains(w,sym_O,u) && H_s.contains(v,sym_C,z) && !H_s.contains((w, sym_A, z))){
                 W.push((w, sym_A, z))
                 H_s += ((w, sym_A, z))
               }
@@ -260,6 +266,8 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         }
       }
     }
+    
+    println(H_s)
 
 
 
