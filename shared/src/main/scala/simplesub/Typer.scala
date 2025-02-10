@@ -104,6 +104,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       case Sel(obj, name) =>
         val obj_ty = typeTerm(obj)._1
         val ty = Record(List(name -> res))
+        types+=ty
         rels += ((obj_ty, symbolMap("empty"), ty ))
         var openSym = 0
           var closeSym = 0
