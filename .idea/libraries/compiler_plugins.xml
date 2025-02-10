@@ -1,0 +1,10 @@
+<component name="libraryTable">
+  <library name="compiler_plugins">
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/target/scala-2.13/compiler_plugins/scalajs-compiler_2.13.14-1.17.0.jar!/" />
+      <root url="jar://$PROJECT_DIR$/target/scala-2.13/compiler_plugins/wartremover_2.13.14-3.1.6.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

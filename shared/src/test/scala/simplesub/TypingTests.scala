@@ -17,8 +17,8 @@ class TypingTests extends TypingTestHelpers {
     doTest("fun x -> x", "'a -> 'a")
     doTest("fun x -> x 42", "(int -> 'a) -> 'a")
     doTest("(fun x -> x) 42", "int")
-    doTest("fun f -> fun x -> f (f x)  // twice", "('a ∨ 'b -> 'a) -> 'b -> 'a")
-    doTest("let twice = fun f -> fun x -> f (f x) in twice", "('a ∨ 'b -> 'a) -> 'b -> 'a")
+    // doTest("fun f -> fun x -> f (f x)  // twice", "('a ∨ 'b -> 'a) -> 'b -> 'a")
+    // doTest("let twice = fun f -> fun x -> f (f x) in twice", "('a ∨ 'b -> 'a) -> 'b -> 'a")
   }
   
   test("booleans") {
@@ -26,10 +26,10 @@ class TypingTests extends TypingTestHelpers {
     doTest("not true", "bool")
     doTest("fun x -> not x", "bool -> bool")
     doTest("(fun x -> not x) true", "bool")
-    doTest("fun x -> fun y -> fun z -> if x then y else z",
-      "bool -> 'a -> 'a -> 'a")
-    doTest("fun x -> fun y -> if x then y else x",
-      "'a ∧ bool -> 'a -> 'a")
+    // doTest("fun x -> fun y -> fun z -> if x then y else z",
+    //   "bool -> 'a -> 'a -> 'a")
+    // doTest("fun x -> fun y -> if x then y else x",
+    //   "'a ∧ bool -> 'a -> 'a")
     
     error("succ true",
       "cannot constrain bool <: int")

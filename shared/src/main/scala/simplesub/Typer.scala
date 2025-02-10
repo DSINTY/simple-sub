@@ -74,6 +74,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
   def typeTerm(term: Term)(implicit ctx: Ctx, lvl: Int, rels: MutSet[(SimpleType, Int, SimpleType)] = MutSet.empty[(SimpleType,Int,SimpleType)], types: MutSet[(SimpleType)]=MutSet[SimpleType](BoolType, IntType)): (SimpleType, MutSet[(SimpleType, Int, SimpleType)], MutSet[(SimpleType)]) = {
     lazy val res = freshVar
     
+    
     val tyv = term match {
       case Var(name) =>
         ctx.getOrElse(name, err("identifier not found: " + name)).instantiate
@@ -102,7 +103,28 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         IntType
       case Sel(obj, name) =>
         val obj_ty = typeTerm(obj)._1
-        rels += ((obj_ty, symbolMap("empty"), Record(List(name -> res))))
+        val ty = Record(List(name -> res))
+        rels += ((obj_ty, symbolMap("empty"), ty ))
+        var openSym = 0
+          var closeSym = 0
+          if (symbolMap.contains("rec_" + name + "(")) 
+          {
+            openSym = symbolMap("rec_" + name + "(")
+            closeSym = symbolMap("rec_" + name + ")")
+          }
+          else
+          {
+            openSym = symbolMap.size
+            symbolMap += ("rec_"+name+"(" -> openSym)
+            closeSym = symbolMap.size
+            symbolMap += ("rec_"+name+")" -> closeSym)
+          }
+          
+          rels += ((res, openSym, ty))
+          rels += ((ty, closeSym, res))
+          types += res
+          
+          fieldSet += name 
         res
       case Rcd(fs) =>
         val fs_ty = fs.map { case (n, t) => (n, typeTerm(t)._1) }
@@ -258,13 +280,13 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         if (H_s.contains((i, symbolMap("S"), j)) ){
           if (i!=j){
           // if i is variable
-          if (typesSeq(i).isInstanceOf[Variable]){
+          if (typesSeq(i).isInstanceOf[Variable]&& !typesSeq(j).isInstanceOf[Variable]){
             val v = typesSeq(i).asInstanceOf[Variable]
             val ty = typesSeq(j)
             v.upperBounds ::= ty
           }
           // if j is variable
-          if (typesSeq(j).isInstanceOf[Variable]){
+          if (typesSeq(j).isInstanceOf[Variable] && !typesSeq(i).isInstanceOf[Variable]){
             val v = typesSeq(j).asInstanceOf[Variable]
             val ty = typesSeq(i)
             v.lowerBounds ::= ty

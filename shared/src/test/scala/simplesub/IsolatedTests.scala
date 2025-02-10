@@ -11,9 +11,7 @@ class IsolatedTests extends TypingTestHelpers {
     // put your test here
     
     // doTest("fun f -> fun x -> f (f x)")
-    doTest("true", "bool")
-    doTest("not true", "bool")
-    doTest("fun x -> not x")
+    doTest("fun x -> x.f")
       
     
   }
