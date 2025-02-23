@@ -190,6 +190,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       }
     }
 
+
     
     // initialize  a stack
     val W = Stack[(Int, Int, Int)]()
@@ -226,6 +227,8 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     }
 
     H_s ++= W
+
+    // println(W)
 
     while (W.nonEmpty){
       val (u,sym_B,v) = W.pop()
@@ -281,7 +284,28 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         if (H_s.contains((i, symbolMap("S"), j)) ){
           if (i!=j){
           // if i is variable
-          if (typesSeq(i).isInstanceOf[Variable]&& !typesSeq(j).isInstanceOf[Variable]){
+          // if (typesSeq(i).isInstanceOf[Variable]&& !typesSeq(j).isInstanceOf[Variable]){
+          if (!typesSeq(i).isInstanceOf[Variable] && !typesSeq(j).isInstanceOf[Variable]){
+            if (!(typesSeq(i).isInstanceOf[Function] && typesSeq(j).isInstanceOf[Function])){
+              if (!(typesSeq(i).isInstanceOf[Record] && typesSeq(j).isInstanceOf[Record])){
+                err(s"cannot constrain ${typesSeq(i).show} <: ${typesSeq(j).show}")
+              }
+            }
+          }
+
+          // Check for missing field for record types
+          if (typesSeq(i).isInstanceOf[Record] && typesSeq(j).isInstanceOf[Record]){
+            val i_fields = typesSeq(i).asInstanceOf[Record].fields
+            val j_fields = typesSeq(j).asInstanceOf[Record].fields
+            for (j_field <- j_fields){
+              // if not second entry of i_fields contains j_field._1
+              if (!i_fields.exists(_._1 == j_field._1)){
+                err(s"missing field: ${j_field._1} in ${typesSeq(i).show}")
+              }
+            }
+          }
+
+          if (typesSeq(i).isInstanceOf[Variable]){
             val v = typesSeq(i).asInstanceOf[Variable]
             val ty = typesSeq(j)
             v.upperBounds ::= ty
