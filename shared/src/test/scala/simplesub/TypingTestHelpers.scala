@@ -19,7 +19,7 @@ class TypingTestHelpers extends AnyFunSuite {
     
     val typer = new Typer(dbg) with TypeSimplifier
     val (tyv,vars) = typer.inferType(term)
-    println("variables:" +vars)
+    // println("variables:" +vars)
     
     
     if (dbg) {

@@ -61,7 +61,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
   def typeTerm(term: Term)(implicit ctx: Ctx, lvl: Int): (SimpleType,MutSet[Variable]) = {
     lazy val res = freshVar
     // val variables = MutSet.empty[Variable]
-    println(s"typing: $term")
+    // println(s"typing: $term")
     term match {
       case Var(name) =>
         val variable = ctx.getOrElse(name, err("identifier not found: " + name)).instantiate
@@ -264,7 +264,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
 
     // construct bounds matrix M symmetrically, where M(i, j) = 1 iff i <: j
     val typeList = types.toList
-    println(typeList)
+    // println(typeList)
     val numNodes = typeList.length
     val typeMap = typeList.zipWithIndex.toMap
     
@@ -333,13 +333,13 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     // }
     
 
-    println("M")
-    for (i <- 0 until numNodes) {
-      for (j <- 0 until numNodes) {
-        print(Mu(i)(j) + " ")
-      }
-      println()
-    }
+    // println("M")
+    // for (i <- 0 until numNodes) {
+    //   for (j <- 0 until numNodes) {
+    //     print(Mu(i)(j) + " ")
+    //   }
+    //   println()
+    // }
 
     
     // val Mupow = Array.fill(numNodes)(Mu)
