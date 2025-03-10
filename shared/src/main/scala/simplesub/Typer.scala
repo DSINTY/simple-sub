@@ -69,6 +69,16 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     } else typeTerm(rhs)(ctx, lvl + 1)._1
     PolymorphicType(lvl, res)
   }
+
+  def typeLetRhsSim(isrec: Boolean, nme: String, rhs: Term)(implicit ctx: Ctx, lvl: Int): SimpleType = {
+    val res = if (isrec) {
+      val e_ty = freshVar(lvl + 1)
+      val ty = typeTerm(rhs)(ctx + (nme -> e_ty), lvl + 1)._1
+      constrain(ty, e_ty)
+      e_ty
+    } else typeTerm(rhs)(ctx, lvl + 1)._1
+    res
+  }
   
   /** Infer the type of a term. */
   def typeTerm(term: Term)(implicit ctx: Ctx, lvl: Int, rels: MutSet[(SimpleType, Int, SimpleType)] = MutSet.empty[(SimpleType,Int,SimpleType)], types: MutSet[(SimpleType)]=MutSet[SimpleType](BoolType, IntType)): (SimpleType, MutSet[(SimpleType, Int, SimpleType)], MutSet[(SimpleType)]) = {
@@ -154,8 +164,19 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         }
         ty
       case Let(isrec, nme, rhs, bod) =>
-        val n_ty = typeLetRhs(isrec, nme, rhs)
-        typeTerm(bod)(ctx + (nme -> n_ty), lvl, rels, types)._1
+        val n_ty = typeLetRhsSim(isrec, nme, rhs)
+        val var_let = freshVar
+        val var_inst = var_let.instantiate
+        rels += ((var_inst, symbolMap("empty"), n_ty))
+        // rels += ((n_ty, symbolMap("empty"), var_inst))
+        val (bod_ty, bod_rels, bod_types) = typeTerm(bod)(ctx + (nme -> n_ty), lvl, rels, types)
+        rels ++= bod_rels
+        types += bod_ty
+        types += var_inst
+        types += n_ty
+        bod_ty
+        // typeTerm(bod)(ctx + (nme -> n_ty), lvl, rels, types)._1
+
     }
     types += tyv
 

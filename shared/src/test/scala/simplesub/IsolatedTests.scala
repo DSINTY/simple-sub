@@ -10,8 +10,8 @@ class IsolatedTests extends TypingTestHelpers {
     
     // put your test here
     
-    // doTest("fun f -> fun x -> f (f x)")
-    doTest("fun f -> { x = f 42 }.x")
+     doTest("let twice = fun f -> fun x -> f (f x) in twice")
+    // doTest("fun f -> fun x -> f (f x)  // twice")
       
     
   }
