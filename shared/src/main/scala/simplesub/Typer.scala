@@ -78,7 +78,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     "add" -> Function(IntType, Function(IntType, IntType)),
     "if" -> {
       val v = freshVar(1)
-      PolymorphicType(0, Function(BoolType, Function(v, Function(v, v))))
+      Function(BoolType, Function(v, Function(v, v)))
     }
   )
 
@@ -270,6 +270,44 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
 
     val typesSeq = types.toSeq
 
+    def cflConstrain(i:Int, j: Int): Unit = {
+    if (i!=j){
+          // if i is variable
+          // if (typesSeq(i).isInstanceOf[Variable]&& !typesSeq(j).isInstanceOf[Variable]){
+          if (!typesSeq(i).isInstanceOf[Variable] && !typesSeq(j).isInstanceOf[Variable]){
+            if (!(typesSeq(i).isInstanceOf[Function] && typesSeq(j).isInstanceOf[Function])){
+              if (!(typesSeq(i).isInstanceOf[Record] && typesSeq(j).isInstanceOf[Record])){
+                err(s"cannot constrain ${typesSeq(i).show} <: ${typesSeq(j).show}")
+              }
+            }
+          }
+
+          // Check for missing field for record types
+          if (typesSeq(i).isInstanceOf[Record] && typesSeq(j).isInstanceOf[Record]){
+            val i_fields = typesSeq(i).asInstanceOf[Record].fields
+            val j_fields = typesSeq(j).asInstanceOf[Record].fields
+            for (j_field <- j_fields){
+              // if not second entry of i_fields contains j_field._1
+              if (!i_fields.exists(_._1 == j_field._1)){
+                err(s"missing field: ${j_field._1} in ${typesSeq(i).show}")
+              }
+            }
+          }
+
+          if (typesSeq(i).isInstanceOf[Variable]){
+            // val v = typesSeq(i).asInstanceOf[Variable]
+            // val ty = typesSeq(j)
+            typesSeq(i).asInstanceOf[Variable].upperBounds ::= typesSeq(j)
+          }
+          // if j is variable
+          if (typesSeq(j).isInstanceOf[Variable] && !typesSeq(i).isInstanceOf[Variable]){
+            // val v = typesSeq(j).asInstanceOf[Variable]
+            // val ty = typesSeq(i)
+            typesSeq(j).asInstanceOf[Variable].lowerBounds ::= typesSeq(i)
+          }
+        }
+  }
+
     for (N <- Seq("R","S")){
       val N_sym = symbolMap(N)
       val N_sym_opp = symbolMap(opp(N))
@@ -329,9 +367,11 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         W.push((i, symbolMap("S"), j))
         cols(j)(symbolMap("S")).insert(i)
         rows(i)(symbolMap("S")).insert(j)
+        cflConstrain(i,j)
         W.push((j, symbolMap("R"), i))
         cols(i)(symbolMap("R")).insert(j)
         rows(i)(symbolMap("R")).insert(j)
+
       }
       else{
         W.push((i, sym, j))
@@ -359,6 +399,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         if (sym_B1==sym_B) {
           W.push((u, sym_A, v))
           H_s += ((u, sym_A, v))
+          if (sym_A==symbolMap("S")) cflConstrain(u, v)
         }
 
       }
@@ -376,6 +417,8 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
             H_s += ((w, sym_A, v))
             cols(v)(sym_A).insert(w)
             rows(w)(sym_A).insert(v)
+            if (sym_A==symbolMap("S")) cflConstrain(w, v)
+
           }
         }
 
@@ -394,6 +437,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
             H_s += ((u, sym_A, w))
             cols(w)(sym_A).insert(u)
             rows(u)(sym_A).insert(w)
+            if (sym_A==symbolMap("S")) cflConstrain(u, w)
           }
         }
 
@@ -417,47 +461,47 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       // }
     }
 
-    for (i<-0 until types.size){
-      for (j<-0 until types.size){
-        if (H_s.contains((i, symbolMap("S"), j)) ){
-          if (i!=j){
-          // if i is variable
-          // if (typesSeq(i).isInstanceOf[Variable]&& !typesSeq(j).isInstanceOf[Variable]){
-          if (!typesSeq(i).isInstanceOf[Variable] && !typesSeq(j).isInstanceOf[Variable]){
-            if (!(typesSeq(i).isInstanceOf[Function] && typesSeq(j).isInstanceOf[Function])){
-              if (!(typesSeq(i).isInstanceOf[Record] && typesSeq(j).isInstanceOf[Record])){
-                err(s"cannot constrain ${typesSeq(i).show} <: ${typesSeq(j).show}")
-              }
-            }
-          }
+    // for (i<-0 until types.size){
+    //   for (j<-0 until types.size){
+    //     if (H_s.contains((i, symbolMap("S"), j)) ){
+    //       if (i!=j){
+    //       // if i is variable
+    //       // if (typesSeq(i).isInstanceOf[Variable]&& !typesSeq(j).isInstanceOf[Variable]){
+    //       if (!typesSeq(i).isInstanceOf[Variable] && !typesSeq(j).isInstanceOf[Variable]){
+    //         if (!(typesSeq(i).isInstanceOf[Function] && typesSeq(j).isInstanceOf[Function])){
+    //           if (!(typesSeq(i).isInstanceOf[Record] && typesSeq(j).isInstanceOf[Record])){
+    //             err(s"cannot constrain ${typesSeq(i).show} <: ${typesSeq(j).show}")
+    //           }
+    //         }
+    //       }
 
-          // Check for missing field for record types
-          if (typesSeq(i).isInstanceOf[Record] && typesSeq(j).isInstanceOf[Record]){
-            val i_fields = typesSeq(i).asInstanceOf[Record].fields
-            val j_fields = typesSeq(j).asInstanceOf[Record].fields
-            for (j_field <- j_fields){
-              // if not second entry of i_fields contains j_field._1
-              if (!i_fields.exists(_._1 == j_field._1)){
-                err(s"missing field: ${j_field._1} in ${typesSeq(i).show}")
-              }
-            }
-          }
+    //       // Check for missing field for record types
+    //       if (typesSeq(i).isInstanceOf[Record] && typesSeq(j).isInstanceOf[Record]){
+    //         val i_fields = typesSeq(i).asInstanceOf[Record].fields
+    //         val j_fields = typesSeq(j).asInstanceOf[Record].fields
+    //         for (j_field <- j_fields){
+    //           // if not second entry of i_fields contains j_field._1
+    //           if (!i_fields.exists(_._1 == j_field._1)){
+    //             err(s"missing field: ${j_field._1} in ${typesSeq(i).show}")
+    //           }
+    //         }
+    //       }
 
-          if (typesSeq(i).isInstanceOf[Variable]){
-            val v = typesSeq(i).asInstanceOf[Variable]
-            val ty = typesSeq(j)
-            v.upperBounds ::= ty
-          }
-          // if j is variable
-          if (typesSeq(j).isInstanceOf[Variable] && !typesSeq(i).isInstanceOf[Variable]){
-            val v = typesSeq(j).asInstanceOf[Variable]
-            val ty = typesSeq(i)
-            v.lowerBounds ::= ty
-          }
-        }
-        }
-      }
-    }
+    //       if (typesSeq(i).isInstanceOf[Variable]){
+    //         val v = typesSeq(i).asInstanceOf[Variable]
+    //         val ty = typesSeq(j)
+    //         v.upperBounds ::= ty
+    //       }
+    //       // if j is variable
+    //       if (typesSeq(j).isInstanceOf[Variable] && !typesSeq(i).isInstanceOf[Variable]){
+    //         val v = typesSeq(j).asInstanceOf[Variable]
+    //         val ty = typesSeq(i)
+    //         v.lowerBounds ::= ty
+    //       }
+    //     }
+    //     }
+    //   }
+    // }
     
     println(H_s)
 
@@ -466,6 +510,8 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     ty
     
   }
+
+  
   /** Constrains the types to enforce a subtyping relationship `lhs` <: `rhs`. */
   def constrain(lhs: SimpleType, rhs: SimpleType)
       // we need a cache to remember the subtyping tests in process; we also make the cache remember
