@@ -7,6 +7,54 @@ import scala.collection.immutable.{SortedSet, SortedMap}
 import scala.util.chaining._
 import scala.annotation.tailrec
 import javax.management.openmbean.SimpleType
+import scala.collection.mutable.ArrayBuffer
+
+class FastSet(n: Int) {
+  // Word size is fixed at 64 bits using Long
+  private val WORD_SIZE = 64
+  // Number of words needed: ceil(n / WORD_SIZE)
+  private val numWords = (n + WORD_SIZE - 1) / WORD_SIZE
+  // Bit vector initialized with all bits set to 0
+  private val bits = Array.fill(numWords)(0L)
+
+  /** Inserts an element x into the set. */
+  def insert(x: Int): Unit = {
+    if (x < 0 || x >= n) throw new IndexOutOfBoundsException(s"Element $x out of bounds [0, $n)")
+    val wordIndex = x / WORD_SIZE
+    val bitPos = x % WORD_SIZE
+    bits(wordIndex) |= (1L << bitPos)  // Set the bit at position bitPos in the word
+  }
+
+  /** Updates this set to be the union of this set and other. */
+  def assignUnion(other: FastSet): Unit = {
+    require(other.numWords == numWords, "Sets must have the same universe size")
+    for (i <- 0 until numWords) {
+      bits(i) |= other.getBits(i)  // Use getBits to access other's bits
+    }
+  }
+
+  /** Returns a list of elements in this set but not in other (X \ Y). */
+  def diff(other: FastSet): List[Int] = {
+    require(other.numWords == numWords, "Sets must have the same universe size")
+    val result = ArrayBuffer[Int]()
+    for (i <- 0 until numWords) {
+      // Compute Z = X & ~Y for the current word
+      var z = bits(i) & ~other.getBits(i)  // Use getBits to access other's bits
+      while (z != 0) {
+        val pos = java.lang.Long.numberOfTrailingZeros(z)  // Find least significant 1 bit
+        val elem = i * WORD_SIZE + pos  // Calculate element index
+        if (elem < n) {  // Ensure we don’t include unused bits beyond n
+          result += elem
+        }
+        z &= z - 1  // Turn off the least significant 1 bit
+      }
+    }
+    result.toList  // Convert to immutable List as required
+  }
+
+  // Renamed method to avoid ambiguity with the bits field
+  private def getBits(i: Int): Long = bits(i)
+}
 
 final case class TypeError(msg: String) extends Exception(msg)
 
@@ -87,6 +135,13 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     
     val tyv = term match {
       case Var(name) =>
+        // if (name == "if"){
+        //   val v = freshVar
+        //   val ty = Function(BoolType, Function(v, Function(v, v)))
+        //   types += v
+        //   types += ty
+        //   ty
+        // }
         ctx.getOrElse(name, err("identifier not found: " + name)).instantiate
       case Lam(name, body) =>
         val param = freshVar
@@ -102,6 +157,8 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         val f_ty = typeTerm(f)._1
         val a_ty = typeTerm(a)._1
         types += Function(a_ty, res)
+        types += a_ty
+        types += f_ty
         rels += ((a_ty, symbolMap("f_in("), Function(a_ty, res)))
         rels += ((Function(a_ty, res), symbolMap("f_in)"), a_ty))
         rels += ((Function(a_ty, res), symbolMap("f_out)"), res))
@@ -116,6 +173,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         val ty = Record(List(name -> res))
         types+=ty
         rels += ((obj_ty, symbolMap("empty"), ty ))
+        types += obj_ty
         var openSym = 0
           var closeSym = 0
           if (symbolMap.contains("rec_" + name + "(")) 
@@ -199,55 +257,99 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     val rules_2 = MutSet.empty[(Int, Int, Int)]
     val rules_3 = MutSet.empty[(Int, Int, Int, Int)]
 
+    for (primType <- Seq(BoolType, IntType)){
+    rels += ((primType, symbolMap("f_in("), Function(primType, primType)))
+    rels += ((Function(primType, primType), symbolMap("f_in)"), primType))
+    rels += ((Function(primType, primType), symbolMap("f_out)"), primType))
+    rels += ((primType, symbolMap("f_out("), Function(primType, primType)))
+    types += Function(primType, primType)
+    types += primType
+   }
+
+   
+
+    val typesSeq = types.toSeq
+
     for (N <- Seq("R","S")){
       val N_sym = symbolMap(N)
       val N_sym_opp = symbolMap(opp(N))
       rules_2 += ((N_sym,N_sym, N_sym))
       rules_1 += ((N_sym,symbolMap(termSym(N))))
-      rules_3 += ((N_sym,symbolMap("f_out("), N_sym, symbolMap("f_out)")))
-      rules_3 += ((N_sym,symbolMap("f_in("), N_sym_opp, symbolMap("f_in)")))
+      // rules_3 += ((N_sym,symbolMap("f_out("), N_sym, symbolMap("f_out)")))
+      val f_outN = symbolMap.size
+      symbolMap += ("f_out("+N -> f_outN)
+      rules_2 += ((f_outN, symbolMap("f_out("), N_sym))
+      rules_2 += ((N_sym, f_outN, symbolMap("f_out)")))
+      // rules_3 += ((N_sym,symbolMap("f_in("), N_sym_opp, symbolMap("f_in)")))
+      val f_inN = symbolMap.size
+      symbolMap += (opp(N)+"f_in)" -> f_inN)
+      rules_2 += ((f_inN, N_sym_opp,symbolMap("f_in)")))
+      rules_2 += ((N_sym, symbolMap("f_in("), f_inN))
+
       for (n<-fieldSet){
-        rules_3 += ((N_sym,symbolMap("rec_"+n+"("), N_sym, symbolMap("rec_"+n+")")))
+        // rules_3 += ((N_sym,symbolMap("rec_"+n+"("), N_sym, symbolMap("rec_"+n+")")))
+        val rec_N = symbolMap.size
+        symbolMap += ("rec_"+n+"("+N -> rec_N)
+        rules_2 += ((rec_N, symbolMap("rec_"+n+"("), N_sym))
+        rules_2 += ((N_sym, rec_N, symbolMap("rec_"+n+")")))
+
       }
     }
+
+    val num_syms = symbolMap.size
+    val num_types = types.size
 
 
     
     // initialize  a stack
     val W = Stack[(Int, Int, Int)]()
     val H_s = MutSet[(Int, Int, Int)]()
+    val cols = Array.fill(num_types, num_syms)(new FastSet(num_types))
+    val rows = Array.fill(num_types, num_syms)(new FastSet(num_types))
     // construct the adjacency matrix
-    val typesSeq = types.toSeq
+    
     // println("typesSeq: %s\n", typesSeq)
 
-    for (primType <- Seq(BoolType, IntType)){
-      rels += ((primType, symbolMap("f_in("), Function(primType, primType)))
-      rels += ((Function(primType, primType), symbolMap("f_in)"), primType))
-      rels += ((Function(primType, primType), symbolMap("f_out)"), primType))
-      rels += ((primType, symbolMap("f_out("), Function(primType, primType)))
-    }
+   
     rels.foreach{case (lhs, sym, rhs) =>
       val i = typesSeq.indexOf(lhs)
       // println("lhs: %s\n", lhs)
       // println("sym: %s\n", sym)
       // println("rhs: %s\n", rhs)
       val j = typesSeq.indexOf(rhs)
+      if (i==(-1)){
+        println("not found i", lhs)
+      }
+      if (j==(-1)){
+        println("not found j", lhs)
+
+      }
       // adj(i)(j) = sym
       if (sym == symbolMap("empty")) {
         W.push((i, symbolMap("S"), j))
+        cols(j)(symbolMap("S")).insert(i)
+        rows(i)(symbolMap("S")).insert(j)
         W.push((j, symbolMap("R"), i))
+        cols(i)(symbolMap("R")).insert(j)
+        rows(i)(symbolMap("R")).insert(j)
       }
       else{
         W.push((i, sym, j))
+        cols(j)(sym).insert(i)
+        rows(i)(sym).insert(j)
       }
       
     }
 
     typesSeq.zipWithIndex.foreach{case (ty, i) =>
       W.push((i, symbolMap("S"), i))
+      cols(i)(symbolMap("S")).insert(i)
+      rows(i)(symbolMap("S")).insert(i)
     }
 
     H_s ++= W
+
+    
 
     // println(W)
 
@@ -263,11 +365,17 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
 
       rules_2.foreach{case (sym_A, sym_B1, sym_B2) =>
         if (sym_B2==sym_B) {
-          for (w<-0 until types.size){
-            if (H_s.contains((w,sym_B1,u)) && !H_s.contains((w, sym_A, v))){
-              W.push((w, sym_A, v))
-              H_s += ((w, sym_A, v))
-            }
+          // for (w<-0 until types.size){
+          //   if (H_s.contains((w,sym_B1,u)) && !H_s.contains((w, sym_A, v))){
+          //     W.push((w, sym_A, v))
+          //     H_s += ((w, sym_A, v))
+          //   }
+          // }
+          for (w <- cols(u)(sym_B1).diff(cols(v)(sym_A))){
+            W.push((w, sym_A, v))
+            H_s += ((w, sym_A, v))
+            cols(v)(sym_A).insert(w)
+            rows(w)(sym_A).insert(v)
           }
         }
 
@@ -275,29 +383,38 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
 
       rules_2.foreach{case (sym_A, sym_B1, sym_B2) =>
         if (sym_B1==sym_B) {
-          for (w<-0 until types.size){
-            if (H_s.contains(v,sym_B2,w) && !H_s.contains((u, sym_A, w))){
-              W.push((u, sym_A, w))
-              H_s += ((u, sym_A, w))
-            }
+          // for (w<-0 until types.size){
+          //   if (H_s.contains(v,sym_B2,w) && !H_s.contains((u, sym_A, w))){
+          //     W.push((u, sym_A, w))
+          //     H_s += ((u, sym_A, w))
+          //   }
+          // }
+          for (w <- rows(v)(sym_B2).diff(rows(u)(sym_A))){
+            W.push((u, sym_A, w))
+            H_s += ((u, sym_A, w))
+            cols(w)(sym_A).insert(u)
+            rows(u)(sym_A).insert(w)
           }
         }
 
       }
 
-      rules_3.foreach{case (sym_A, sym_O, sym_B1, sym_C) =>
-        if (sym_B1==sym_B) {
-          for (w<-0 until types.size){
-            for (z<-0 until types.size){
-              if (H_s.contains(w,sym_O,u) && H_s.contains(v,sym_C,z) && !H_s.contains((w, sym_A, z))){
-                W.push((w, sym_A, z))
-                H_s += ((w, sym_A, z))
-              }
-            }
-          }
-        }
+      // rules_3.foreach{case (sym_A, sym_O, sym_B1, sym_C) =>
+      //   if (sym_B1==sym_B) {
+      //     for (w<-0 until types.size){
+      //       for (z<-0 until types.size){
+      //         if (H_s.contains(w,sym_O,u) && H_s.contains(v,sym_C,z) && !H_s.contains((w, sym_A, z))){
+      //           W.push((w, sym_A, z))
+      //           H_s += ((w, sym_A, z))
+      //           cols(z)(sym_A).insert(w)
+      //           rows(w)(sym_A).insert(z)
+                
+      //         }
+      //       }
+      //     }
+      //   }
 
-      }
+      // }
     }
 
     for (i<-0 until types.size){

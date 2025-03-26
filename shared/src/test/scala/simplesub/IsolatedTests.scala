@@ -10,7 +10,7 @@ class IsolatedTests extends TypingTestHelpers {
     
     // put your test here
     
-     doTest("let twice = fun f -> fun x -> f (f x) in twice")
+     doTest("not true")
     // doTest("fun f -> fun x -> f (f x)  // twice")
       
     
