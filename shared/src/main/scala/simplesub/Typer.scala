@@ -99,7 +99,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
   def inferTypes(pgrm: Pgrm, ctx: Ctx = builtins): List[Either[TypeError, PolymorphicType]] =
     pgrm.defs match {
       case (isrec, nme, rhs) :: defs =>
-        val ty_sch = try Right(typeLetRhs(isrec, nme, rhs)(ctx, 0)) catch {
+        val ty_sch = try Right(typeLetRhs(isrec, nme, rhs)(ctx, 0, MutSet.empty[(SimpleType, Int, SimpleType)])) catch {
           case err: TypeError => Left(err) }
         ty_sch :: inferTypes(Pgrm(defs), ctx + (nme -> ty_sch.getOrElse(freshVar(0))))
       case Nil => Nil
@@ -108,11 +108,12 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
   def inferType(term: Term, ctx: Ctx = builtins, lvl: Int = 0): (SimpleType, MutSet[(SimpleType, Int, SimpleType)], MutSet[(SimpleType)]) = typeTerm(term)(ctx, lvl)
   
   /** Infer the type of a let binding right-hand side. */
-  def typeLetRhs(isrec: Boolean, nme: String, rhs: Term)(implicit ctx: Ctx, lvl: Int): PolymorphicType = {
+  def typeLetRhs(isrec: Boolean, nme: String, rhs: Term)(implicit ctx: Ctx, lvl: Int,rels: MutSet[(SimpleType, Int, SimpleType)]): PolymorphicType = {
     val res = if (isrec) {
       val e_ty = freshVar(lvl + 1)
       val ty = typeTerm(rhs)(ctx + (nme -> e_ty), lvl + 1)._1
-      constrain(ty, e_ty)
+      // constrain(ty, e_ty)
+      rels += ((ty, symbolMap("empty"), e_ty))
       e_ty
     } else typeTerm(rhs)(ctx, lvl + 1)._1
     PolymorphicType(lvl, res)
@@ -135,13 +136,6 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     
     val tyv = term match {
       case Var(name) =>
-        // if (name == "if"){
-        //   val v = freshVar
-        //   val ty = Function(BoolType, Function(v, Function(v, v)))
-        //   types += v
-        //   types += ty
-        //   ty
-        // }
         ctx.getOrElse(name, err("identifier not found: " + name)).instantiate
       case Lam(name, body) =>
         val param = freshVar
@@ -222,17 +216,8 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         }
         ty
       case Let(isrec, nme, rhs, bod) =>
-        val n_ty = typeLetRhsSim(isrec, nme, rhs)
-        val var_let = freshVar
-        val var_inst = var_let.instantiate
-        rels += ((var_inst, symbolMap("empty"), n_ty))
-        // rels += ((n_ty, symbolMap("empty"), var_inst))
-        val (bod_ty, bod_rels, bod_types) = typeTerm(bod)(ctx + (nme -> n_ty), lvl, rels, types)
-        rels ++= bod_rels
-        types += bod_ty
-        types += var_inst
-        types += n_ty
-        bod_ty
+        val n_ty = typeLetRhs(isrec, nme, rhs)(ctx, lvl, rels)
+        typeTerm(bod)(ctx + (nme -> n_ty), lvl)._1
         // typeTerm(bod)(ctx + (nme -> n_ty), lvl, rels, types)._1
 
     }
@@ -268,45 +253,11 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
 
    
 
-    val typesSeq = types.toSeq
+    val typesArray = types.to(ArrayBuffer)
+    val reverseTypesMap: MutMap[SimpleType, Int] = typesArray.zipWithIndex.to(MutMap)
 
-    def cflConstrain(i:Int, j: Int): Unit = {
-    if (i!=j){
-          // if i is variable
-          // if (typesSeq(i).isInstanceOf[Variable]&& !typesSeq(j).isInstanceOf[Variable]){
-          if (!typesSeq(i).isInstanceOf[Variable] && !typesSeq(j).isInstanceOf[Variable]){
-            if (!(typesSeq(i).isInstanceOf[Function] && typesSeq(j).isInstanceOf[Function])){
-              if (!(typesSeq(i).isInstanceOf[Record] && typesSeq(j).isInstanceOf[Record])){
-                err(s"cannot constrain ${typesSeq(i).show} <: ${typesSeq(j).show}")
-              }
-            }
-          }
 
-          // Check for missing field for record types
-          if (typesSeq(i).isInstanceOf[Record] && typesSeq(j).isInstanceOf[Record]){
-            val i_fields = typesSeq(i).asInstanceOf[Record].fields
-            val j_fields = typesSeq(j).asInstanceOf[Record].fields
-            for (j_field <- j_fields){
-              // if not second entry of i_fields contains j_field._1
-              if (!i_fields.exists(_._1 == j_field._1)){
-                err(s"missing field: ${j_field._1} in ${typesSeq(i).show}")
-              }
-            }
-          }
-
-          if (typesSeq(i).isInstanceOf[Variable]){
-            // val v = typesSeq(i).asInstanceOf[Variable]
-            // val ty = typesSeq(j)
-            typesSeq(i).asInstanceOf[Variable].upperBounds ::= typesSeq(j)
-          }
-          // if j is variable
-          if (typesSeq(j).isInstanceOf[Variable] && !typesSeq(i).isInstanceOf[Variable]){
-            // val v = typesSeq(j).asInstanceOf[Variable]
-            // val ty = typesSeq(i)
-            typesSeq(j).asInstanceOf[Variable].lowerBounds ::= typesSeq(i)
-          }
-        }
-  }
+    
 
     for (N <- Seq("R","S")){
       val N_sym = symbolMap(N)
@@ -342,19 +293,79 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     // initialize  a stack
     val W = Stack[(Int, Int, Int)]()
     val H_s = MutSet[(Int, Int, Int)]()
-    val cols = Array.fill(num_types, num_syms)(new FastSet(num_types))
-    val rows = Array.fill(num_types, num_syms)(new FastSet(num_types))
+    val cols = ArrayBuffer.fill(num_types, num_syms)(new FastSet(num_types))
+    val rows = ArrayBuffer.fill(num_types, num_syms)(new FastSet(num_types))
     // construct the adjacency matrix
     
-    // println("typesSeq: %s\n", typesSeq)
+    // println("typesArray: %s\n", typesArray)
+
+    def cflConstrain(i:Int, j: Int): (Int, Int) = {
+    var returnI = i
+    var returnJ = j
+    if (i!=j){
+          // if i is variable
+          // if (typesArray(i).isInstanceOf[Variable]&& !typesArray(j).isInstanceOf[Variable]){
+          if (!typesArray(i).isInstanceOf[Variable] && !typesArray(j).isInstanceOf[Variable]){
+            if (!(typesArray(i).isInstanceOf[Function] && typesArray(j).isInstanceOf[Function])){
+              if (!(typesArray(i).isInstanceOf[Record] && typesArray(j).isInstanceOf[Record])){
+                err(s"cannot constrain ${typesArray(i).show} <: ${typesArray(j).show}")
+              }
+            }
+          }
+
+          // Check for missing field for record types
+          if (typesArray(i).isInstanceOf[Record] && typesArray(j).isInstanceOf[Record]){
+            val i_fields = typesArray(i).asInstanceOf[Record].fields
+            val j_fields = typesArray(j).asInstanceOf[Record].fields
+            for (j_field <- j_fields){
+              // if not second entry of i_fields contains j_field._1
+              if (!i_fields.exists(_._1 == j_field._1)){
+                err(s"missing field: ${j_field._1} in ${typesArray(i).show}")
+              }
+            }
+          }
+
+          if (typesArray(i).isInstanceOf[Variable]){
+            // val v = typesArray(i).asInstanceOf[Variable]
+            // val ty = typesArray(j)
+            if (typesArray(j).level <= typesArray(i).level) {
+              typesArray(i).asInstanceOf[Variable].upperBounds ::= typesArray(j)
+            }
+
+            else
+              {
+                val rhs = extrude(typesArray(j), false)(typesArray(i).level, MutMap.empty)
+                returnJ = typesArray.size
+                typesArray += rhs
+                reverseTypesMap(rhs) = returnJ
+              }
+          }
+          // if j is variable
+          if (typesArray(j).isInstanceOf[Variable] && !typesArray(i).isInstanceOf[Variable]){
+            // val v = typesArray(j).asInstanceOf[Variable]
+            // val ty = typesArray(i)
+            if (typesArray(i).level <= typesArray(j).level){
+            typesArray(j).asInstanceOf[Variable].lowerBounds ::= typesArray(i)
+            }
+            else{
+              val lhs = extrude(typesArray(i), false)(typesArray(j).level, MutMap.empty)
+              returnI = typesArray.size
+              typesArray += lhs
+              reverseTypesMap(lhs) = returnI
+            }
+          }
+        }
+
+      (returnI, returnJ)
+  }
 
    
     rels.foreach{case (lhs, sym, rhs) =>
-      val i = typesSeq.indexOf(lhs)
+      val i = reverseTypesMap(lhs)
       // println("lhs: %s\n", lhs)
       // println("sym: %s\n", sym)
       // println("rhs: %s\n", rhs)
-      val j = typesSeq.indexOf(rhs)
+      val j = reverseTypesMap(rhs)
       if (i==(-1)){
         println("not found i", lhs)
       }
@@ -381,7 +392,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       
     }
 
-    typesSeq.zipWithIndex.foreach{case (ty, i) =>
+    typesArray.zipWithIndex.foreach{case (ty, i) =>
       W.push((i, symbolMap("S"), i))
       cols(i)(symbolMap("S")).insert(i)
       rows(i)(symbolMap("S")).insert(i)
@@ -397,9 +408,20 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       val (u,sym_B,v) = W.pop()
       rules_1.foreach{case (sym_A, sym_B1) =>
         if (sym_B1==sym_B) {
-          W.push((u, sym_A, v))
-          H_s += ((u, sym_A, v))
-          if (sym_A==symbolMap("S")) cflConstrain(u, v)
+          if (sym_A==symbolMap("S")) {
+              val (i, j) = cflConstrain(u, v)
+              W.push((i, sym_A, j))
+              H_s += ((i, sym_A, j))
+              cols(j)(sym_A).insert(i)
+              rows(i)(sym_A).insert(j)
+
+            }
+            else{
+              W.push((u, sym_A, v))
+              H_s += ((u, sym_A, v))
+              cols(v)(sym_A).insert(u)
+              rows(u)(sym_A).insert(v)
+            }
         }
 
       }
@@ -413,11 +435,21 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
           //   }
           // }
           for (w <- cols(u)(sym_B1).diff(cols(v)(sym_A))){
-            W.push((w, sym_A, v))
-            H_s += ((w, sym_A, v))
-            cols(v)(sym_A).insert(w)
-            rows(w)(sym_A).insert(v)
-            if (sym_A==symbolMap("S")) cflConstrain(w, v)
+            if (sym_A==symbolMap("S")) {
+              val (i, j) = cflConstrain(w, v)
+              W.push((i, sym_A, j))
+              H_s += ((i, sym_A, j))
+              cols(j)(sym_A).insert(i)
+              rows(i)(sym_A).insert(j)
+
+            }
+            else{
+              W.push((w, sym_A, v))
+              H_s += ((w, sym_A, v))
+              cols(v)(sym_A).insert(w)
+              rows(w)(sym_A).insert(v)
+            }
+            
 
           }
         }
@@ -433,11 +465,21 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
           //   }
           // }
           for (w <- rows(v)(sym_B2).diff(rows(u)(sym_A))){
-            W.push((u, sym_A, w))
-            H_s += ((u, sym_A, w))
-            cols(w)(sym_A).insert(u)
-            rows(u)(sym_A).insert(w)
-            if (sym_A==symbolMap("S")) cflConstrain(u, w)
+            if (sym_A==symbolMap("S")) {
+              val (i, j) = cflConstrain(u, w)
+              W.push((i, sym_A, j))
+              H_s += ((i, sym_A, j))
+              cols(j)(sym_A).insert(i)
+              rows(i)(sym_A).insert(j)
+
+            }
+            else{
+              W.push((u, sym_A, w))
+              H_s += ((u, sym_A, w))
+              cols(w)(sym_A).insert(u)
+              rows(u)(sym_A).insert(w)
+            }
+            
           }
         }
 
@@ -466,36 +508,36 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     //     if (H_s.contains((i, symbolMap("S"), j)) ){
     //       if (i!=j){
     //       // if i is variable
-    //       // if (typesSeq(i).isInstanceOf[Variable]&& !typesSeq(j).isInstanceOf[Variable]){
-    //       if (!typesSeq(i).isInstanceOf[Variable] && !typesSeq(j).isInstanceOf[Variable]){
-    //         if (!(typesSeq(i).isInstanceOf[Function] && typesSeq(j).isInstanceOf[Function])){
-    //           if (!(typesSeq(i).isInstanceOf[Record] && typesSeq(j).isInstanceOf[Record])){
-    //             err(s"cannot constrain ${typesSeq(i).show} <: ${typesSeq(j).show}")
+    //       // if (typesArray(i).isInstanceOf[Variable]&& !typesArray(j).isInstanceOf[Variable]){
+    //       if (!typesArray(i).isInstanceOf[Variable] && !typesArray(j).isInstanceOf[Variable]){
+    //         if (!(typesArray(i).isInstanceOf[Function] && typesArray(j).isInstanceOf[Function])){
+    //           if (!(typesArray(i).isInstanceOf[Record] && typesArray(j).isInstanceOf[Record])){
+    //             err(s"cannot constrain ${typesArray(i).show} <: ${typesArray(j).show}")
     //           }
     //         }
     //       }
 
     //       // Check for missing field for record types
-    //       if (typesSeq(i).isInstanceOf[Record] && typesSeq(j).isInstanceOf[Record]){
-    //         val i_fields = typesSeq(i).asInstanceOf[Record].fields
-    //         val j_fields = typesSeq(j).asInstanceOf[Record].fields
+    //       if (typesArray(i).isInstanceOf[Record] && typesArray(j).isInstanceOf[Record]){
+    //         val i_fields = typesArray(i).asInstanceOf[Record].fields
+    //         val j_fields = typesArray(j).asInstanceOf[Record].fields
     //         for (j_field <- j_fields){
     //           // if not second entry of i_fields contains j_field._1
     //           if (!i_fields.exists(_._1 == j_field._1)){
-    //             err(s"missing field: ${j_field._1} in ${typesSeq(i).show}")
+    //             err(s"missing field: ${j_field._1} in ${typesArray(i).show}")
     //           }
     //         }
     //       }
 
-    //       if (typesSeq(i).isInstanceOf[Variable]){
-    //         val v = typesSeq(i).asInstanceOf[Variable]
-    //         val ty = typesSeq(j)
+    //       if (typesArray(i).isInstanceOf[Variable]){
+    //         val v = typesArray(i).asInstanceOf[Variable]
+    //         val ty = typesArray(j)
     //         v.upperBounds ::= ty
     //       }
     //       // if j is variable
-    //       if (typesSeq(j).isInstanceOf[Variable] && !typesSeq(i).isInstanceOf[Variable]){
-    //         val v = typesSeq(j).asInstanceOf[Variable]
-    //         val ty = typesSeq(i)
+    //       if (typesArray(j).isInstanceOf[Variable] && !typesArray(i).isInstanceOf[Variable]){
+    //         val v = typesArray(j).asInstanceOf[Variable]
+    //         val ty = typesArray(i)
     //         v.lowerBounds ::= ty
     //       }
     //     }
