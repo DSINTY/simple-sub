@@ -17,8 +17,10 @@ class TypingTests extends TypingTestHelpers {
     doTest("fun x -> x", "'a -> 'a")
     doTest("fun x -> x 42", "(int -> 'a) -> 'a")
     doTest("(fun x -> x) 42", "int")
-    // doTest("fun f -> fun x -> f (f x)  // twice", "('a OR 'b -> 'a) -> 'b -> 'a")
-    // doTest("let twice = fun f -> fun x -> f (f x) in twice", "('a OR 'b -> 'a) -> 'b -> 'a")
+    // doTest("fun f -> fun x -> f (f x)  // twice", "('a UNION 'b -> 'a) -> 'b -> 'a")
+    // doTest("let twice = fun f -> fun x -> f (f x) in twice", "('a UNION 'b -> 'a) -> 'b -> 'a")
+    doTest("fun f -> fun x -> f (f x)  // twice", "('a UNION 'b -> 'b) -> 'a -> 'b")
+    doTest("let twice = fun f -> fun x -> f (f x) in twice", "('a UNION 'b -> 'b) -> 'a -> 'b")
   }
   
   test("booleans") {
@@ -26,10 +28,10 @@ class TypingTests extends TypingTestHelpers {
     doTest("not true", "bool")
     doTest("fun x -> not x", "bool -> bool")
     doTest("(fun x -> not x) true", "bool")
-    // doTest("fun x -> fun y -> fun z -> if x then y else z",
-    //   "bool -> 'a -> 'a -> 'a")
-    // doTest("fun x -> fun y -> if x then y else x",
-    //   "'a AND bool -> 'a -> 'a")
+    doTest("fun x -> fun y -> fun z -> if x then y else z",
+      "bool -> 'a -> 'a -> 'a")
+    doTest("fun x -> fun y -> if x then y else x",
+      "'a INTER bool -> 'a -> 'a")
     
     error("succ true",
       "cannot constrain bool <: int")
@@ -37,8 +39,10 @@ class TypingTests extends TypingTestHelpers {
       "cannot constrain bool <: int")
     error("(fun x -> not x.f) { f = 123 }",
       "cannot constrain int <: bool")
+    // error("(fun f -> fun x -> not (f x.u)) false",
+    //   "cannot constrain bool <: 'a -> 'b")
     error("(fun f -> fun x -> not (f x.u)) false",
-      "cannot constrain bool <: 'a -> 'b")
+      "cannot constrain 'a -> 'b <: bool")
   }
   
   test("records") {
@@ -49,7 +53,7 @@ class TypingTests extends TypingTestHelpers {
     doTest("(fun x -> x.f) { f = 42 }", "int")
     doTest("fun f -> { x = f 42 }.x", "(int -> 'a) -> 'a")
     doTest("fun f -> { x = f 42; y = 123 }.y", "(int -> TOP) -> int")
-    // doTest("if true then { a = 1; b = true } else { b = false; c = 42 }", "{b: bool}")
+    doTest("if true then { a = 1; b = true } else { b = false; c = 42 }", "{b: bool}")
     
     error("{ a = 123; b = true }.c",
       "missing field: c in {a: int, b: bool}")
@@ -58,15 +62,15 @@ class TypingTests extends TypingTestHelpers {
   }
   
   test("self-app") {
-    doTest("fun x -> x x", "'a AND ('a -> 'b) -> 'b")
+    doTest("fun x -> x x", "'a INTER ('a -> 'b) -> 'b")
     
-    doTest("fun x -> x x x", "'a AND ('a -> 'a -> 'b) -> 'b")
-    doTest("fun x -> fun y -> x y x", "'a AND ('b -> 'a -> 'c) -> 'b -> 'c")
-    doTest("fun x -> fun y -> x x y", "'a AND ('a -> 'b -> 'c) -> 'b -> 'c")
+    doTest("fun x -> x x x", "'a INTER ('a -> 'a -> 'b) -> 'b")
+    doTest("fun x -> fun y -> x y x", "'a INTER ('b -> 'a -> 'c) -> 'b -> 'c")
+    doTest("fun x -> fun y -> x x y", "'a INTER ('a -> 'b -> 'c) -> 'b -> 'c")
     doTest("(fun x -> x x) (fun x -> x x)", "BOT")
     
     doTest("fun x -> {l = x x; r = x }",
-      "'a AND ('a -> 'b) -> {l: 'b, r: 'a}")
+      "'a INTER ('a -> 'b) -> {l: 'b, r: 'a}")
     
     // From https://github.com/stedolan/mlsub
     // Y combinator:
@@ -74,15 +78,15 @@ class TypingTests extends TypingTestHelpers {
       "('a -> 'a) -> 'a")
     // Z combinator:
     doTest("(fun f -> (fun x -> f (fun v -> (x x) v)) (fun x -> f (fun v -> (x x) v)))",
-      "(('a -> 'b) -> 'c AND ('a -> 'b)) -> 'c")
+      "(('a -> 'b) -> 'c INTER ('a -> 'b)) -> 'c")
     // Function that takes arbitrarily many arguments:
     doTest("(fun f -> (fun x -> f (fun v -> (x x) v)) (fun x -> f (fun v -> (x x) v))) (fun f -> fun x -> f)",
       "TOP -> (TOP -> 'a) as 'a")
     
-    // doTest("let rec trutru = fun g -> trutru (g true) in trutru",
-    //   "(bool -> 'a) as 'a -> BOT")
-    // doTest("fun i -> if ((i i) true) then true else true",
-    //   "'a AND ('a -> bool -> bool) -> bool")
+    doTest("let rec trutru = fun g -> trutru (g true) in trutru",
+      "(bool -> 'a) as 'a -> BOT")
+    doTest("fun i -> if ((i i) true) then true else true",
+      "'a INTER ('a -> bool -> bool) -> bool")
     // ^ for: λi. if ((i i) true) then true else true,
     //    Dolan's thesis says MLsub infers: (α → ((bool → bool) ⊓ α)) → bool
     //    which does seem equivalent, despite being quite syntactically different
@@ -93,11 +97,11 @@ class TypingTests extends TypingTestHelpers {
     doTest("fun y -> let f = fun x -> x in {a = f y; b = f true}",
       "'a -> {a: 'a, b: bool}")
     doTest("fun y -> let f = fun x -> y x in {a = f 0; b = f true}",
-      "(bool OR int -> 'a) -> {a: 'a, b: 'a}")
+      "(bool UNION int -> 'a) -> {a: 'a, b: 'a}")
     doTest("fun y -> let f = fun x -> x y in {a = f (fun z -> z); b = f (fun z -> true)}",
       "'a -> {a: 'a, b: bool}")
     doTest("fun y -> let f = fun x -> x y in {a = f (fun z -> z); b = f (fun z -> succ z)}",
-      "'a AND int -> {a: 'a, b: int}")
+      "'a INTER int -> {a: 'a, b: int}")
     
     error("(fun k -> k (fun x -> let tmp = add x 1 in x)) (fun f -> f true)",
       "cannot constrain bool <: int")
@@ -108,7 +112,7 @@ class TypingTests extends TypingTestHelpers {
     
     // Simple example of extruding type variables constrained both ways:
     doTest("fun k -> let test = k (fun x -> let tmp = add x 1 in x) in test",
-      "(('a AND int -> 'a) -> 'b) -> 'b")
+      "(('a INTER int -> 'a) -> 'b) -> 'b")
     // MLsub: ((((int & a) -> a) -> b) -> b)
     
     // Adapted to exhibit a problem if we use the old extrusion algorithm:
@@ -118,7 +122,7 @@ class TypingTests extends TypingTestHelpers {
     
     // Example loss of polymorphism due to extrusion – the identity function becomes less polymorphic:
     doTest("fun k -> let test = (fun id -> {tmp = k id; res = id}.res) (fun x -> x) in {u=test 0; v=test true}",
-      "(('a -> 'a OR bool OR int) -> TOP) -> {u: 'a OR int, v: 'a OR bool}")
+      "(('a -> 'a UNION bool UNION int) -> TOP) -> {u: 'a UNION int, v: 'a UNION bool}")
     // MLsub: (((a -> (bool | int | a)) -> Top) -> {u : (int | a), v : (bool | a)})
     
     // Compared with this version: (MLsub still agrees)
@@ -126,17 +130,17 @@ class TypingTests extends TypingTestHelpers {
       "(('a -> 'a) -> TOP) -> {u: int, v: bool}")
     
     doTest("fun k -> let test = (fun thefun -> {l=k thefun; r=thefun 1}) (fun x -> let tmp = add x 1 in x) in test",
-      "(('a AND int -> 'a OR int) -> 'b) -> {l: 'b, r: int}")
+      "(('a INTER int -> 'a UNION int) -> 'b) -> {l: 'b, r: int}")
     
     
     doTest("fun a -> (fun k -> let test = k (fun x -> let tmp = add x 1 in x) in test) (fun f -> f a)",
-      "'a AND int -> 'a")
+      "'a INTER int -> 'a")
     
     doTest("(fun k -> let test = k (fun x -> let tmp = (fun y -> add y 1) x in x) in test)",
-      "(('a AND int -> 'a) -> 'b) -> 'b")
+      "(('a INTER int -> 'a) -> 'b) -> 'b")
     
     doTest("(fun k -> let test = k (fun x -> let tmp = let f = fun y -> add y 1 in f x in x) in test)",
-      "(('a AND int -> 'a) -> 'b) -> 'b")
+      "(('a INTER int -> 'a) -> 'b) -> 'b")
     
     doTest("fun f -> let r = fun x -> fun g -> { a = f x; b = g x } in r",
       "('a -> 'b) -> 'a -> ('a -> 'c) -> {a: 'b, b: 'c}")
@@ -148,10 +152,10 @@ class TypingTests extends TypingTestHelpers {
     //   val res : (Top -> {u : {a : int}, v : {a : bool}})
     
     doTest("fun f -> let r = fun x -> fun g -> { a = g x; b = f x } in {u = r 0 succ; v = r true not}",
-      "(bool OR int -> 'a) -> {u: {a: int, b: 'a}, v: {a: bool, b: 'a}}")
+      "(bool UNION int -> 'a) -> {u: {a: int, b: 'a}, v: {a: bool, b: 'a}}")
     
     doTest("fun f -> let r = fun x -> fun g -> { a = g x; b = f x } in {u = r 0 succ; v = r {t=true} (fun y -> y.t)}",
-      "(int OR {t: bool} -> 'a) -> {u: {a: int, b: 'a}, v: {a: bool, b: 'a}}")
+      "(int UNION {t: bool} -> 'a) -> {u: {a: int, b: 'a}, v: {a: bool, b: 'a}}")
     // MLsub:
     //   let res = fun f -> let r = fun x -> fun g -> { a = g x; b = f x } in {u = r 0 (fun n -> n + 1); v = r {t=true} (fun y -> y.t)}
     //   val res : (({t : bool} | int -> a) -> {u : {a : int, b : a}, v : {a : bool, b : a}})
@@ -167,15 +171,15 @@ class TypingTests extends TypingTestHelpers {
     doTest("let rec r = fun a -> r in if true then r else r",
       "(TOP -> 'a) as 'a")
     // ^ without canonicalization, we get the type:
-    //    TOP -> (TOP -> 'a) as 'a OR (TOP -> 'b) as 'b
+    //    TOP -> (TOP -> 'a) as 'a UNION (TOP -> 'b) as 'b
     doTest("let rec l = fun a -> l in let rec r = fun a -> fun a -> r in if true then l else r",
       "(TOP -> TOP -> 'a) as 'a")
     // ^ without canonicalization, we get the type:
-    //    TOP -> (TOP -> 'a) as 'a OR (TOP -> (TOP -> TOP -> 'b) as 'b)
+    //    TOP -> (TOP -> 'a) as 'a UNION (TOP -> (TOP -> TOP -> 'b) as 'b)
     doTest("let rec l = fun a -> fun a -> fun a -> l in let rec r = fun a -> fun a -> r in if true then l else r",
       "(TOP -> TOP -> TOP -> TOP -> TOP -> TOP -> 'a) as 'a") // 6 is the LCD of 3 and 2
     // ^ without canonicalization, we get the type:
-    //    TOP -> TOP -> (TOP -> TOP -> 'a) as 'a OR (TOP -> (TOP -> TOP -> TOP -> 'b) as 'b)
+    //    TOP -> TOP -> (TOP -> TOP -> 'a) as 'a UNION (TOP -> (TOP -> TOP -> TOP -> 'b) as 'b)
     
     // from https://www.cl.cam.ac.uk/~sd601/mlsub/
     doTest("let rec recursive_monster = fun x -> { thing = x; self = recursive_monster x } in recursive_monster",
@@ -186,25 +190,25 @@ class TypingTests extends TypingTestHelpers {
     doTest("(let rec x = {a = x; b = x} in x)",                           "{a: 'a, b: 'a} as 'a")
     doTest("(let rec x = fun v -> {a = x v; b = x v} in x)",              "TOP -> {a: 'a, b: 'a} as 'a")
     error("let rec x = (let rec y = {u = y; v = (x y)} in 0) in 0",       "cannot constrain int <: 'a -> 'b")
-    doTest("(fun x -> (let y = (x x) in 0))",                             "'a AND ('a -> TOP) -> int")
-    doTest("(let rec x = (fun y -> (y (x x))) in x)",                     "('a -> ('a AND ('a -> 'b)) as 'b) -> 'a")
-    // ^ Note: without canonicalization, we get the simpler:               ('b -> 'b AND 'a) as 'a -> 'b
+    doTest("(fun x -> (let y = (x x) in 0))",                             "'a INTER ('a -> TOP) -> int")
+    doTest("(let rec x = (fun y -> (y (x x))) in x)",                     "('a -> ('a INTER ('a -> 'b)) as 'b) -> 'a")
+    // ^ Note: without canonicalization, we get the simpler:               ('b -> 'b INTER 'a) as 'a -> 'b
     doTest("fun next -> 0",                                               "TOP -> int")
-    doTest("((fun x -> (x x)) (fun x -> x))",                             "('b OR ('b -> 'a)) as 'a")
-    doTest("(let rec x = (fun y -> (x (y y))) in x)",                     "('b AND ('b -> 'a)) as 'a -> BOT")
-    doTest("fun x -> (fun y -> (x (y y)))",                               "('a -> 'b) -> 'c AND ('c -> 'a) -> 'b")
-    doTest("(let rec x = (let y = (x x) in (fun z -> z)) in x)",          "'a -> ('a OR ('a -> 'b)) as 'b")
-    doTest("(let rec x = (fun y -> (let z = (x x) in y)) in x)",          "'a -> ('a OR ('a -> 'b)) as 'b")
+    doTest("((fun x -> (x x)) (fun x -> x))",                             "('b UNION ('b -> 'a)) as 'a")
+    doTest("(let rec x = (fun y -> (x (y y))) in x)",                     "('b INTER ('b -> 'a)) as 'a -> BOT")
+    doTest("fun x -> (fun y -> (x (y y)))",                               "('a -> 'b) -> 'c INTER ('c -> 'a) -> 'b")
+    doTest("(let rec x = (let y = (x x) in (fun z -> z)) in x)",          "'a -> ('a UNION ('a -> 'b)) as 'b")
+    doTest("(let rec x = (fun y -> (let z = (x x) in y)) in x)",          "'a -> ('a UNION ('a -> 'b)) as 'b")
     doTest("(let rec x = (fun y -> {u = y; v = (x x)}) in x)",
-      "'a -> {u: 'a OR ('a -> 'b), v: 'c} as 'c as 'b")
+      "'a -> {u: 'a UNION ('a -> 'b), v: 'c} as 'c as 'b")
     doTest("(let rec x = (fun y -> {u = (x x); v = y}) in x)",
-      "'a -> {u: 'c, v: 'a OR ('a -> 'b)} as 'c as 'b")
-    doTest("(let rec x = (fun y -> (let z = (y x) in y)) in x)",          "('b AND ('a -> TOP) -> 'b) as 'a")
-    doTest("(fun x -> (let y = (x x.v) in 0))",                           "{v: 'a} AND ('a -> TOP) -> int")
+      "'a -> {u: 'c, v: 'a UNION ('a -> 'b)} as 'c as 'b")
+    doTest("(let rec x = (fun y -> (let z = (y x) in y)) in x)",          "('b INTER ('a -> TOP) -> 'b) as 'a")
+    doTest("(fun x -> (let y = (x x.v) in 0))",                           "{v: 'a} INTER ('a -> TOP) -> int")
     doTest("let rec x = (let y = (x x) in (fun z -> z)) in (x (fun y -> y.u))", // [test:T1]
-      "'a OR ('a AND {u: 'b} -> ('a OR 'b OR ('a AND {u: 'b} -> 'c)) as 'c)")
+      "'a UNION ('a INTER {u: 'b} -> ('a UNION 'b UNION ('a INTER {u: 'b} -> 'c)) as 'c)")
     // ^ Note: without canonicalization, we get the simpler:
-    // ('b OR ('b AND {u: 'c} -> 'a OR 'c)) as 'a
+    // ('b UNION ('b INTER {u: 'c} -> 'a UNION 'c)) as 'a
   }
   
   

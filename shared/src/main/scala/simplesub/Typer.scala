@@ -78,7 +78,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     "add" -> Function(IntType, Function(IntType, IntType)),
     "if" -> {
       val v = freshVar(1)
-      Function(BoolType, Function(v, Function(v, v)))
+      PolymorphicType(0, Function(BoolType, Function(v, Function(v, v))))
     }
   )
 
@@ -99,47 +99,70 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
   def inferTypes(pgrm: Pgrm, ctx: Ctx = builtins): List[Either[TypeError, PolymorphicType]] =
     pgrm.defs match {
       case (isrec, nme, rhs) :: defs =>
-        val ty_sch = try Right(typeLetRhs(isrec, nme, rhs)(ctx, 0, MutSet.empty[(SimpleType, Int, SimpleType)])) catch {
+        val ty_sch = try Right(typeLetRhs(isrec, nme, rhs)(ctx, 0, MutSet.empty[(SimpleType, Int, SimpleType)], MutSet.empty[(SimpleType)], MutSet.empty[(SimpleType, SimpleType)])) catch {
           case err: TypeError => Left(err) }
         ty_sch :: inferTypes(Pgrm(defs), ctx + (nme -> ty_sch.getOrElse(freshVar(0))))
       case Nil => Nil
     }
   
-  def inferType(term: Term, ctx: Ctx = builtins, lvl: Int = 0): (SimpleType, MutSet[(SimpleType, Int, SimpleType)], MutSet[(SimpleType)]) = typeTerm(term)(ctx, lvl)
+  def inferType(term: Term, ctx: Ctx = builtins, lvl: Int = 0): (SimpleType, MutSet[(SimpleType, Int, SimpleType)], MutSet[(SimpleType)], MutSet[(SimpleType, SimpleType)]) = typeTerm(term)(ctx, lvl)
   
   /** Infer the type of a let binding right-hand side. */
-  def typeLetRhs(isrec: Boolean, nme: String, rhs: Term)(implicit ctx: Ctx, lvl: Int,rels: MutSet[(SimpleType, Int, SimpleType)]): PolymorphicType = {
+  def typeLetRhs(isrec: Boolean, nme: String, rhs: Term)(implicit ctx: Ctx, lvl: Int,rels: MutSet[(SimpleType, Int, SimpleType)],types: MutSet[(SimpleType)],polyRels: MutSet[(SimpleType,SimpleType)]): PolymorphicType = {
     val res = if (isrec) {
       val e_ty = freshVar(lvl + 1)
-      val ty = typeTerm(rhs)(ctx + (nme -> e_ty), lvl + 1)._1
+      val ty = typeTerm(rhs)(ctx + (nme -> e_ty), lvl + 1, rels, types)._1
       // constrain(ty, e_ty)
       rels += ((ty, symbolMap("empty"), e_ty))
+      rels += ((e_ty, symbolMap("rev"), ty))
+      types += e_ty
+      types += ty
       e_ty
-    } else typeTerm(rhs)(ctx, lvl + 1)._1
+    } else typeTerm(rhs)(ctx, lvl + 1, rels, types)._1
+    types += res
+
     PolymorphicType(lvl, res)
   }
 
-  def typeLetRhsSim(isrec: Boolean, nme: String, rhs: Term)(implicit ctx: Ctx, lvl: Int): SimpleType = {
-    val res = if (isrec) {
-      val e_ty = freshVar(lvl + 1)
-      val ty = typeTerm(rhs)(ctx + (nme -> e_ty), lvl + 1)._1
-      constrain(ty, e_ty)
-      e_ty
-    } else typeTerm(rhs)(ctx, lvl + 1)._1
-    res
-  }
+ 
   
   /** Infer the type of a term. */
-  def typeTerm(term: Term)(implicit ctx: Ctx, lvl: Int, rels: MutSet[(SimpleType, Int, SimpleType)] = MutSet.empty[(SimpleType,Int,SimpleType)], types: MutSet[(SimpleType)]=MutSet[SimpleType](BoolType, IntType)): (SimpleType, MutSet[(SimpleType, Int, SimpleType)], MutSet[(SimpleType)]) = {
+  def typeTerm(term: Term)(implicit ctx: Ctx, lvl: Int, rels: MutSet[(SimpleType, Int, SimpleType)] = MutSet.empty[(SimpleType,Int,SimpleType)], types: MutSet[(SimpleType)]=MutSet[SimpleType](BoolType, IntType), polyRels: MutSet[(SimpleType,SimpleType)]=MutSet.empty[(SimpleType,SimpleType)]): (SimpleType, MutSet[(SimpleType, Int, SimpleType)], MutSet[(SimpleType)], MutSet[(SimpleType, SimpleType)]) = {
     lazy val res = freshVar
     
     
     val tyv = term match {
-      case Var(name) =>
+      case Var(name) =>{
+        if (name == "if") {
+          val v = freshVar(1)
+          // val ty = Function(BoolType, Function(v, Function(v, v)))
+          types += v
+          // types += ty
+          rels += ((v, symbolMap("f_in("), Function(v, v)))
+          rels += ((v, symbolMap("f_out("), Function(v, v)))
+          rels += ((Function(v, v), symbolMap("f_in)"), v))
+          rels += ((Function(v, v), symbolMap("f_out)"), v))
+          types += Function(v, v)
+          rels += ((v, symbolMap("f_in("), Function(v, Function(v, v))))
+          rels += ((Function(v, v), symbolMap("f_out("), Function(v, Function(v, v))))
+          rels += ((Function(v, Function(v, v)), symbolMap("f_in)"), v))
+          rels += ((Function(v, Function(v, v)), symbolMap("f_out)"), Function(v, v)))
+          types += Function(v, Function(v, v))
+
+          rels += ((BoolType, symbolMap("f_in("), Function(BoolType, Function(v, Function(v, v)))))
+          rels += ((Function(BoolType, Function(v, Function(v, v))), symbolMap("f_in)"), BoolType))
+          rels += ((Function(BoolType, Function(v, Function(v, v))), symbolMap("f_out)"), Function(v, Function(v, v))))
+          rels += (( Function(v, Function(v, v)), symbolMap("f_out("), Function(BoolType, Function(v, Function(v, v)))))
+          types += Function(BoolType, Function(v, Function(v, v)))
+
+          PolymorphicType(0, Function(BoolType, Function(v, Function(v, v)))).instantiate
+      }
+      else
         ctx.getOrElse(name, err("identifier not found: " + name)).instantiate
+    }
       case Lam(name, body) =>
         val param = freshVar
-        val body_ty = typeTerm(body)(ctx + (name -> param), lvl, rels, types)._1
+        val body_ty = typeTerm(body)(ctx + (name -> param), lvl, rels, types, polyRels)._1
         rels += ((param, symbolMap("f_in("), Function(param, body_ty)))
         rels += ((body_ty, symbolMap("f_out("), Function(param, body_ty)))
         rels += ((Function(param, body_ty), symbolMap("f_in)"), param))
@@ -158,6 +181,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         rels += ((Function(a_ty, res), symbolMap("f_out)"), res))
         rels += ((res, symbolMap("f_out("), Function(a_ty, res)))
         rels += ((f_ty, symbolMap("empty"), Function(a_ty, res)))
+        rels += ((Function(a_ty, res), symbolMap("rev"), f_ty))
 
         res
       case Lit(n) =>
@@ -167,6 +191,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         val ty = Record(List(name -> res))
         types+=ty
         rels += ((obj_ty, symbolMap("empty"), ty ))
+        rels += ((ty, symbolMap("rev"), obj_ty ))
         types += obj_ty
         var openSym = 0
           var closeSym = 0
@@ -216,15 +241,15 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         }
         ty
       case Let(isrec, nme, rhs, bod) =>
-        val n_ty = typeLetRhs(isrec, nme, rhs)(ctx, lvl, rels)
-        typeTerm(bod)(ctx + (nme -> n_ty), lvl)._1
+        val n_ty = typeLetRhs(isrec, nme, rhs)(ctx, lvl, rels, types, polyRels)
+        typeTerm(bod)(ctx + (nme -> n_ty), lvl, rels, types, polyRels)._1
         // typeTerm(bod)(ctx + (nme -> n_ty), lvl, rels, types)._1
 
     }
     types += tyv
 
 
-    (tyv, rels, types)
+    (tyv, rels, types, polyRels)
   }
 
   def opp(sym: String): String = {
@@ -237,10 +262,11 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     else "empty"
   }
   
-  def cflReach(ty: SimpleType, rels: MutSet[(SimpleType, Int, SimpleType)], types: MutSet[(SimpleType)]): SimpleType = {
+  def cflReach(ty: SimpleType, rels: MutSet[(SimpleType, Int, SimpleType)], types: MutSet[(SimpleType)], polyRels:  MutSet[(SimpleType, SimpleType)]): SimpleType = {
     val rules_1 = MutSet.empty[(Int, Int)]
     val rules_2 = MutSet.empty[(Int, Int, Int)]
     val rules_3 = MutSet.empty[(Int, Int, Int, Int)]
+    println("PolyRels: ", polyRels)
 
     for (primType <- Seq(BoolType, IntType)){
     rels += ((primType, symbolMap("f_in("), Function(primType, primType)))
@@ -250,6 +276,12 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     types += Function(primType, primType)
     types += primType
    }
+
+    rels += ((IntType, symbolMap("f_in("), Function(IntType, Function(IntType, IntType))))
+    rels += ((Function(IntType, Function(IntType, IntType)), symbolMap("f_in)"), IntType))
+    rels += ((Function(IntType, Function(IntType, IntType)), symbolMap("f_out)"), Function(IntType, IntType)))
+    rels += ((Function(IntType, IntType), symbolMap("f_out("), Function(IntType, Function(IntType, IntType))))
+    types += Function(IntType, Function(IntType, IntType))
 
    
 
@@ -264,28 +296,212 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       val N_sym_opp = symbolMap(opp(N))
       rules_2 += ((N_sym,N_sym, N_sym))
       rules_1 += ((N_sym,symbolMap(termSym(N))))
-      // rules_3 += ((N_sym,symbolMap("f_out("), N_sym, symbolMap("f_out)")))
-      val f_outN = symbolMap.size
-      symbolMap += ("f_out("+N -> f_outN)
-      rules_2 += ((f_outN, symbolMap("f_out("), N_sym))
-      rules_2 += ((N_sym, f_outN, symbolMap("f_out)")))
-      // rules_3 += ((N_sym,symbolMap("f_in("), N_sym_opp, symbolMap("f_in)")))
-      val f_inN = symbolMap.size
-      symbolMap += (opp(N)+"f_in)" -> f_inN)
-      rules_2 += ((f_inN, N_sym_opp,symbolMap("f_in)")))
-      rules_2 += ((N_sym, symbolMap("f_in("), f_inN))
+      rules_3 += ((N_sym,symbolMap("f_out("), N_sym, symbolMap("f_out)")))
+      // val f_outN = symbolMap.size
+      // symbolMap += ("f_out("+N -> f_outN)
+      // rules_2 += ((f_outN, symbolMap("f_out("), N_sym))
+      // rules_2 += ((N_sym, f_outN, symbolMap("f_out)")))
+      rules_3 += ((N_sym,symbolMap("f_in("), N_sym_opp, symbolMap("f_in)")))
+      // val f_inN = symbolMap.size
+      // symbolMap += (opp(N)+"f_in)" -> f_inN)
+      // rules_2 += ((f_inN, N_sym_opp,symbolMap("f_in)")))
+      // rules_2 += ((N_sym, symbolMap("f_in("), f_inN))
+      // symbolMap += ("f_in("+N -> f_inN)
+      // rules_2 += ((f_inN, symbolMap("f_in("), N_sym_opp))
+      // rules_2 += ((N_sym, f_inN, symbolMap("f_in)")))
 
       for (n<-fieldSet){
-        // rules_3 += ((N_sym,symbolMap("rec_"+n+"("), N_sym, symbolMap("rec_"+n+")")))
-        val rec_N = symbolMap.size
-        symbolMap += ("rec_"+n+"("+N -> rec_N)
-        rules_2 += ((rec_N, symbolMap("rec_"+n+"("), N_sym))
-        rules_2 += ((N_sym, rec_N, symbolMap("rec_"+n+")")))
+        rules_3 += ((N_sym,symbolMap("rec_"+n+"("), N_sym, symbolMap("rec_"+n+")")))
+        // val rec_N = symbolMap.size
+        // symbolMap += ("rec_"+n+"("+N -> rec_N)
+        // rules_2 += ((rec_N, symbolMap("rec_"+n+"("), N_sym))
+        // rules_2 += ((N_sym, rec_N, symbolMap("rec_"+n+")")))
 
       }
     }
 
-    val num_syms = symbolMap.size
+    // convert rules_3 into rules_2
+    val NonTermSyms = MutSet[String]("S","R")
+    for (rule_3<- rules_3){
+      val (sym_A, sym_B1, sym_B2, sym_B3) = rule_3
+      val current_N = symbolMap.size
+      val sym_B1_name = symbolMap.find(_._2 == sym_B1).map(_._1).getOrElse(s"unknown_symbol_$sym_B1")
+      val sym_B2_name = symbolMap.find(_._2 == sym_B2).map(_._1).getOrElse(s"unknown_symbol_$sym_B2")
+      symbolMap += ( (sym_B1_name+sym_B2_name) -> current_N)
+      NonTermSyms += (sym_B1_name+sym_B2_name)
+      rules_2 += ((current_N, sym_B1, sym_B2))
+      rules_2 += ((sym_A, current_N, sym_B3))
+
+
+    }
+
+    // for each rule, add the corresponding polymorphic rule
+    val poly_symbolMap = MutMap.empty[String,Int]
+    var i = 0
+    val original_rules_2 = rules_2.clone()
+    val original_rules_3 = rules_3.clone()
+    val original_symbolMap = symbolMap.clone()
+    for (polyRel<-polyRels){
+      val symMapSize = symbolMap.size
+      symbolMap += ("poly_epsilon_"+i)->symMapSize
+      symbolMap += ("poly_delta_"+i)->(symMapSize+1)
+      rels += ((polyRel._1,symMapSize,polyRel._2 ))
+      
+      rels += ((polyRel._2,symMapSize+1,polyRel._1 ))
+
+      val current_symMap_size = symbolMap.size
+      for ((symName,j)<- original_symbolMap){
+      
+        poly_symbolMap += (symName+"_poly_open_"+i)->(current_symMap_size+j*2)
+        poly_symbolMap += (symName+"_poly_close_"+i)->(current_symMap_size+j*2+1)
+        rules_2 += ((current_symMap_size+j*2, j, symMapSize), (current_symMap_size+j*2, symMapSize, j))
+        rules_2 += ((current_symMap_size+j*2+1, j, symMapSize+1), (current_symMap_size+j*2+1, symMapSize+1, j))
+        // rules_1 += ((j,current_symMap_size+j*2))
+
+
+      }
+      
+      
+      symbolMap ++= poly_symbolMap
+      // rels += ((polyRel._1,symbolMap(("S_poly_open_"+i)),polyRel._2 ))
+      // rels += ((polyRel._2,symbolMap(("S_poly_close_"+i)),polyRel._1 ))
+      rels += ((polyRel._1,symbolMap(("R_poly_open_"+i)),polyRel._2 ))
+      rels += ((polyRel._2,symbolMap(("R_poly_close_"+i)),polyRel._1 ))
+      for ((sym_A,sym_B1,sym_B2)<-original_rules_2){
+        
+         val sym_A_name = symbolMap.find(_._2 == sym_A).map(_._1).getOrElse(s"unknown_symbol_$sym_A")
+         val sym_B1_name = symbolMap.find(_._2 == sym_B1).map(_._1).getOrElse(s"unknown_symbol_$sym_B1")
+         val sym_B2_name = symbolMap.find(_._2 == sym_B2).map(_._1).getOrElse(s"unknown_symbol_$sym_B2")
+         
+        //  rules_2 += ((symbolMap(sym_A_name+"_poly_open_"+i),sym_B1, symbolMap(sym_B2_name+"_poly_open_"+i)))
+         rules_2 += ((sym_A,symbolMap(sym_B1_name+"_poly_open_"+i), symbolMap(sym_B2_name+"_poly_close_"+i)))
+        //  rules_2 += ((symbolMap(sym_A_name+"_poly_open_"+i),symbolMap(sym_B1_name+"_poly_open_"+i), sym_B2))
+      }
+      
+     
+
+      // for ((sym_A, sym_B1, sym_B2, sym_B3) <- original_rules_3){
+      //   val sym_A_name = symbolMap.find(_._2 == sym_A).map(_._1).getOrElse(s"unknown_symbol_$sym_A")
+      //   val sym_B1_name = symbolMap.find(_._2 == sym_B1).map(_._1).getOrElse(s"unknown_symbol_$sym_B1")
+      //   val sym_B2_name = symbolMap.find(_._2 == sym_B2).map(_._1).getOrElse(s"unknown_symbol_$sym_B2")
+      //   val sym_B3_name = symbolMap.find(_._2 == sym_B3).map(_._1).getOrElse(s"unknown_symbol_$sym_B3")
+      //   // rules_3 += ((symbolMap(sym_A_name+"_poly_open_"+i),symbolMap(sym_B1_name+"_poly_open_"+i), sym_B2, sym_B3))
+      //   // rules_3 += ((sym_A,symbolMap(sym_B1_name+"_poly_open_"+i), symbolMap(sym_B2_name+"_poly_close_"+i), sym_B3))
+      //   // rules_3 += ((symbolMap(sym_A_name+"_poly_open_"+i),symbolMap(sym_B1_name+"_poly_open_"+i), symbolMap(sym_B2_name+"_poly_open_"+i), symbolMap(sym_B3_name+"_poly_close_"+i)))
+      //   // rules_3 += ((sym_A,symbolMap(sym_B1_name+"_poly_open_"+i),sym_B2 , symbolMap(sym_B3_name+"_poly_close_"+i)))
+      //   // rules_3 += ((symbolMap(sym_A_name+"_poly_open_"+i),sym_B1, symbolMap(sym_B2_name+"_poly_open_"+i),sym_B3))
+      //   rules_3 += ((sym_A, sym_B1, symbolMap(sym_B2_name+"_poly_open_"+i), symbolMap(sym_B3_name+"_poly_close_"+i)))
+      //   rules_3 += ((symbolMap(sym_A_name+"_poly_open_"+i),sym_B1,sym_B2, symbolMap(sym_B3_name+"_poly_open_"+i)))
+      // }
+
+     
+      i += 1
+
+    }
+
+    val num_inst = i
+    // generate all possible permutations of num_inst
+    val numbers = (0 until num_inst).toList
+    
+    // Get all possible lengths (from 1 to n)
+    val perms = (1 to num_inst).flatMap { length =>
+      // Get all combinations of given length
+      numbers.combinations(length).flatMap { combo =>
+        // Get all permutations of each combination
+        combo.permutations.toList
+      }.toList
+    }.toList
+
+    val num_perms = perms.size
+    var curMapSize = symbolMap.size
+    for (nonTermSym <- NonTermSyms){
+      for (i <- 0 until num_perms){
+        val perm = perms(i)
+        if (perm.size!=1) {
+          
+          symbolMap+= (nonTermSym + "_poly_open_path_" +i)-> curMapSize
+          curMapSize += 1
+        }
+
+      }
+    }
+
+    for  ((sym_A,sym_B1,sym_B2)<-original_rules_2){
+        
+         val sym_A_name = symbolMap.find(_._2 == sym_A).map(_._1).getOrElse(s"unknown_symbol_$sym_A")
+         val sym_B1_name = symbolMap.find(_._2 == sym_B1).map(_._1).getOrElse(s"unknown_symbol_$sym_B1")
+         val sym_B2_name = symbolMap.find(_._2 == sym_B2).map(_._1).getOrElse(s"unknown_symbol_$sym_B2")
+          var num_pos_perms = 0
+         if (NonTermSyms.contains(sym_A_name))  num_pos_perms = num_perms
+         else num_pos_perms = num_inst
+
+          for (i <- 0 until num_pos_perms){
+
+            val perm = perms(i)
+            val perm_size = perm.size
+            // if (perm.size!=1) {
+              for (cut<-0 to perm_size){
+                val afterCut = perm.slice(cut, perm_size)
+                val afterCutSize = perm_size - cut
+                var lhs_name=""
+                var rhs_name=""
+                var valid = true
+                if (cut == 0) lhs_name = sym_B1_name
+                else if (cut == 1) lhs_name = sym_B1_name + "_poly_open_"+perm(0)
+                else{
+                  val beforeCut = perm.slice(0, cut)
+                  val beforeCutIndex = perms.indexOf(beforeCut)
+                  lhs_name = sym_B1_name + "_poly_open_path_"+beforeCutIndex
+                  if (!NonTermSyms.contains(sym_B1_name)) valid = false
+                }
+
+                if (afterCutSize == 0) rhs_name = sym_B2_name
+                else if (afterCutSize == 1) rhs_name = sym_B2_name + "_poly_open_"+perm.last
+                else {
+                  val afterCutIndex = perms.indexOf(afterCut)
+                  rhs_name = sym_B2_name + "_poly_open_path_"+afterCutIndex
+                  if (!NonTermSyms.contains(sym_B2_name)) valid = false
+                }
+                if (valid)
+                {
+                  var sym_A_poly_name = ""
+                  if (perm_size==1) sym_A_poly_name = sym_A_name+"_poly_open_"+perm(0)
+                  else sym_A_poly_name = sym_A_name+"_poly_open_path_"+i
+                  rules_2 += ((symbolMap(sym_A_poly_name),symbolMap(lhs_name), symbolMap(rhs_name)))
+                }
+
+              }
+              for (j <- 0 until num_inst){
+                if (!perm.contains(j)){
+                  val newPerm = perm :+ j
+                  val index = perms.indexOf(newPerm)
+                  var sym_A_poly_name = ""
+                  if (perm_size==1) sym_A_poly_name = sym_A_name+"_poly_open_"+perm(0)
+                  else sym_A_poly_name = sym_A_name+"_poly_open_path_"+i
+
+                  if (NonTermSyms.contains(sym_B1_name))rules_2 += ((symbolMap(sym_A_poly_name),symbolMap(sym_B1_name+"_poly_open_path_"+index), symbolMap(sym_B2_name+"_poly_close_"+j)))
+                }
+              }
+            // }
+
+          }
+         
+         
+        //  rules_2 += ((symbolMap(sym_A_name+"_poly_open_"+i),symbolMap(sym_B1_name+"_poly_open_"+i), sym_B2))
+      }
+  
+
+    
+
+    
+    
+
+    
+
+
+    
+
+    var num_syms = symbolMap.size
     val num_types = types.size
 
 
@@ -293,15 +509,16 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     // initialize  a stack
     val W = Stack[(Int, Int, Int)]()
     val H_s = MutSet[(Int, Int, Int)]()
-    val cols = ArrayBuffer.fill(num_types, num_syms)(new FastSet(num_types))
-    val rows = ArrayBuffer.fill(num_types, num_syms)(new FastSet(num_types))
+    val cols = ArrayBuffer.fill(num_types, num_syms*3)(new FastSet(num_types))
+    val rows = ArrayBuffer.fill(num_types, num_syms*3)(new FastSet(num_types))
     // construct the adjacency matrix
     
     // println("typesArray: %s\n", typesArray)
+    /** Copies a type up to its type variables of wrong level (and their extruded bounds). */
+  
 
-    def cflConstrain(i:Int, j: Int): (Int, Int) = {
-    var returnI = i
-    var returnJ = j
+    def cflConstrain(i:Int, j: Int, sub: Boolean, poly: Boolean) = {
+    
     if (i!=j){
           // if i is variable
           // if (typesArray(i).isInstanceOf[Variable]&& !typesArray(j).isInstanceOf[Variable]){
@@ -328,42 +545,36 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
           if (typesArray(i).isInstanceOf[Variable]){
             // val v = typesArray(i).asInstanceOf[Variable]
             // val ty = typesArray(j)
-            if (typesArray(j).level <= typesArray(i).level) {
-              typesArray(i).asInstanceOf[Variable].upperBounds ::= typesArray(j)
-            }
-
+            if (sub)
+            typesArray(i).asInstanceOf[Variable].upperBounds ::= typesArray(j)
             else
-              {
-                val rhs = extrude(typesArray(j), false)(typesArray(i).level, MutMap.empty)
-                returnJ = typesArray.size
-                typesArray += rhs
-                reverseTypesMap(rhs) = returnJ
+              if (poly|| !typesArray(j).isInstanceOf[Variable]){
+                typesArray(i).asInstanceOf[Variable].lowerBounds ::= typesArray(j)
               }
+            
           }
           // if j is variable
-          if (typesArray(j).isInstanceOf[Variable] && !typesArray(i).isInstanceOf[Variable]){
-            // val v = typesArray(j).asInstanceOf[Variable]
-            // val ty = typesArray(i)
-            if (typesArray(i).level <= typesArray(j).level){
-            typesArray(j).asInstanceOf[Variable].lowerBounds ::= typesArray(i)
-            }
-            else{
-              val lhs = extrude(typesArray(i), false)(typesArray(j).level, MutMap.empty)
-              returnI = typesArray.size
-              typesArray += lhs
-              reverseTypesMap(lhs) = returnI
-            }
-          }
+          // if (typesArray(j).isInstanceOf[Variable] && !typesArray(i).isInstanceOf[Variable]){
+          //   // val v = typesArray(j).asInstanceOf[Variable]
+          //   // val ty = typesArray(i)
+            
+          //   typesArray(j).asInstanceOf[Variable].lowerBounds ::= typesArray(i)
+          //   // W.push((j, symbolMap("rev"), i))
+          //   //   H_s += ((j, symbolMap("rev"), i))
+          //   //   cols(i)(symbolMap("rev")).insert(j)
+          //   //   rows(j)(symbolMap("rev")).insert(i)
+            
+          // }
         }
 
-      (returnI, returnJ)
+      
   }
 
    
     rels.foreach{case (lhs, sym, rhs) =>
       val i = reverseTypesMap(lhs)
       // println("lhs: %s\n", lhs)
-      // println("sym: %s\n", sym)
+      // println("sym: ", symbolMap.find(_._2 == sym).map(_._1).getOrElse(s"unknown_symbol_$sym"))
       // println("rhs: %s\n", rhs)
       val j = reverseTypesMap(rhs)
       if (i==(-1)){
@@ -373,22 +584,11 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         println("not found j", lhs)
 
       }
-      // adj(i)(j) = sym
-      if (sym == symbolMap("empty")) {
-        W.push((i, symbolMap("S"), j))
-        cols(j)(symbolMap("S")).insert(i)
-        rows(i)(symbolMap("S")).insert(j)
-        cflConstrain(i,j)
-        W.push((j, symbolMap("R"), i))
-        cols(i)(symbolMap("R")).insert(j)
-        rows(i)(symbolMap("R")).insert(j)
-
-      }
-      else{
+      
         W.push((i, sym, j))
         cols(j)(sym).insert(i)
         rows(i)(sym).insert(j)
-      }
+      // }
       
     }
 
@@ -402,53 +602,49 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
 
     
 
+    
+
     // println(W)
 
     while (W.nonEmpty){
       val (u,sym_B,v) = W.pop()
       rules_1.foreach{case (sym_A, sym_B1) =>
         if (sym_B1==sym_B) {
-          if (sym_A==symbolMap("S")) {
-              val (i, j) = cflConstrain(u, v)
-              W.push((i, sym_A, j))
-              H_s += ((i, sym_A, j))
-              cols(j)(sym_A).insert(i)
-              rows(i)(sym_A).insert(j)
-
-            }
-            else{
-              W.push((u, sym_A, v))
-              H_s += ((u, sym_A, v))
-              cols(v)(sym_A).insert(u)
-              rows(u)(sym_A).insert(v)
-            }
+          if (sym_A==symbolMap("S")) cflConstrain(u, v, true, false)
+          W.push((u, sym_A, v))
+          H_s += ((u, sym_A, v))
+          cols(v)(sym_A).insert(u)
+          rows(u)(sym_A).insert(v)
+            
         }
 
       }
 
       rules_2.foreach{case (sym_A, sym_B1, sym_B2) =>
         if (sym_B2==sym_B) {
-          // for (w<-0 until types.size){
-          //   if (H_s.contains((w,sym_B1,u)) && !H_s.contains((w, sym_A, v))){
-          //     W.push((w, sym_A, v))
-          //     H_s += ((w, sym_A, v))
-          //   }
-          // }
           for (w <- cols(u)(sym_B1).diff(cols(v)(sym_A))){
-            if (sym_A==symbolMap("S")) {
-              val (i, j) = cflConstrain(w, v)
-              W.push((i, sym_A, j))
-              H_s += ((i, sym_A, j))
-              cols(j)(sym_A).insert(i)
-              rows(i)(sym_A).insert(j)
-
-            }
+            if (sym_A==symbolMap("S"))  cflConstrain(w, v, true, false)
             else{
-              W.push((w, sym_A, v))
-              H_s += ((w, sym_A, v))
-              cols(v)(sym_A).insert(w)
-              rows(w)(sym_A).insert(v)
+              val sym_A_name = symbolMap.find(_._2 == sym_A).map(_._1).getOrElse(s"unknown_symbol_$sym_A")
+              if (sym_A_name.startsWith("S_poly_open")){
+                cflConstrain(w, v, true,true)
+              }
             }
+            if (sym_A==symbolMap("R")) cflConstrain(w, v, false,false)
+            else{
+              val sym_A_name = symbolMap.find(_._2 == sym_A).map(_._1).getOrElse(s"unknown_symbol_$sym_A")
+              if (sym_A_name.startsWith("R_poly_open")){
+                cflConstrain(w, v, false,true)
+              }
+            }
+                
+
+            W.push((w, sym_A, v))
+            H_s += ((w, sym_A, v))
+            cols(v)(sym_A).insert(w)
+            rows(w)(sym_A).insert(v)
+              
+            
             
 
           }
@@ -458,94 +654,71 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
 
       rules_2.foreach{case (sym_A, sym_B1, sym_B2) =>
         if (sym_B1==sym_B) {
-          // for (w<-0 until types.size){
-          //   if (H_s.contains(v,sym_B2,w) && !H_s.contains((u, sym_A, w))){
-          //     W.push((u, sym_A, w))
-          //     H_s += ((u, sym_A, w))
-          //   }
-          // }
           for (w <- rows(v)(sym_B2).diff(rows(u)(sym_A))){
-            if (sym_A==symbolMap("S")) {
-              val (i, j) = cflConstrain(u, w)
-              W.push((i, sym_A, j))
-              H_s += ((i, sym_A, j))
-              cols(j)(sym_A).insert(i)
-              rows(i)(sym_A).insert(j)
-
-            }
+            if (sym_A==symbolMap("S")) cflConstrain(u, w, true,false)
             else{
-              W.push((u, sym_A, w))
-              H_s += ((u, sym_A, w))
-              cols(w)(sym_A).insert(u)
-              rows(u)(sym_A).insert(w)
+              val sym_A_name = symbolMap.find(_._2 == sym_A).map(_._1).getOrElse(s"unknown_symbol_$sym_A")
+              if (sym_A_name.startsWith("S_poly_open")){
+                cflConstrain(u, w, true, true)
+              }
             }
+            if (sym_A==symbolMap("R")) cflConstrain(u, w, false, false)
+            else{
+              val sym_A_name = symbolMap.find(_._2 == sym_A).map(_._1).getOrElse(s"unknown_symbol_$sym_A")
+              if (sym_A_name.startsWith("R_poly_open")){
+                cflConstrain(u, w, false,true)
+              }
+            }
+            
+            W.push((u, sym_A, w))
+            H_s += ((u, sym_A, w))
+            cols(w)(sym_A).insert(u)
+            rows(u)(sym_A).insert(w)
+              
+            
             
           }
         }
 
       }
 
-      // rules_3.foreach{case (sym_A, sym_O, sym_B1, sym_C) =>
-      //   if (sym_B1==sym_B) {
-      //     for (w<-0 until types.size){
-      //       for (z<-0 until types.size){
-      //         if (H_s.contains(w,sym_O,u) && H_s.contains(v,sym_C,z) && !H_s.contains((w, sym_A, z))){
-      //           W.push((w, sym_A, z))
-      //           H_s += ((w, sym_A, z))
-      //           cols(z)(sym_A).insert(w)
-      //           rows(w)(sym_A).insert(z)
-                
-      //         }
-      //       }
-      //     }
-      //   }
-
-      // }
+      
     }
 
-    // for (i<-0 until types.size){
-    //   for (j<-0 until types.size){
-    //     if (H_s.contains((i, symbolMap("S"), j)) ){
-    //       if (i!=j){
-    //       // if i is variable
-    //       // if (typesArray(i).isInstanceOf[Variable]&& !typesArray(j).isInstanceOf[Variable]){
-    //       if (!typesArray(i).isInstanceOf[Variable] && !typesArray(j).isInstanceOf[Variable]){
-    //         if (!(typesArray(i).isInstanceOf[Function] && typesArray(j).isInstanceOf[Function])){
-    //           if (!(typesArray(i).isInstanceOf[Record] && typesArray(j).isInstanceOf[Record])){
-    //             err(s"cannot constrain ${typesArray(i).show} <: ${typesArray(j).show}")
-    //           }
-    //         }
-    //       }
-
-    //       // Check for missing field for record types
-    //       if (typesArray(i).isInstanceOf[Record] && typesArray(j).isInstanceOf[Record]){
-    //         val i_fields = typesArray(i).asInstanceOf[Record].fields
-    //         val j_fields = typesArray(j).asInstanceOf[Record].fields
-    //         for (j_field <- j_fields){
-    //           // if not second entry of i_fields contains j_field._1
-    //           if (!i_fields.exists(_._1 == j_field._1)){
-    //             err(s"missing field: ${j_field._1} in ${typesArray(i).show}")
-    //           }
-    //         }
-    //       }
-
-    //       if (typesArray(i).isInstanceOf[Variable]){
-    //         val v = typesArray(i).asInstanceOf[Variable]
-    //         val ty = typesArray(j)
-    //         v.upperBounds ::= ty
-    //       }
-    //       // if j is variable
-    //       if (typesArray(j).isInstanceOf[Variable] && !typesArray(i).isInstanceOf[Variable]){
-    //         val v = typesArray(j).asInstanceOf[Variable]
-    //         val ty = typesArray(i)
-    //         v.lowerBounds ::= ty
-    //       }
-    //     }
-    //     }
-    //   }
+    // for ((u,sym_A,v) <- H_s){
+    //   val sym_A_name = symbolMap.find(_._2 == sym_A).map(_._1).getOrElse(s"unknown_symbol_$sym_A")
+    //   println(typesArray(u), sym_A_name, typesArray(v))
     // }
+
+
+
+    // handle polymorphic types
+    // loop through SymbolMap
+    // val PolySymMap = MutMap.empty[String, Int]
+    // // val num_syms = symbolMap.size
+    // val originalNumSyms = symbolMap.size
     
-    println(H_s)
+    // for ((sym, i) <- symbolMap){
+    //   PolySymMap += (sym+"_poly" -> (i+num_syms))
+    // }
+    // num_syms += num_syms
+    // symbolMap ++= PolySymMap
+    // symbolMap+= ("inst_to_poly" -> (num_syms+1))
+    // symbolMap+= ("poly_to_inst" -> (num_syms+2))
+    // num_syms += 2
+
+    // for ((sym, i) <- symbolMap){
+    //   if (i<originalNumSyms){
+    //     rules_2 += ((i, symbolMap("inst_to_poly"), i+originalNumSyms))
+    //     rules_2 += ((symbolMap("inst_to_poly"), i , i+originalNumSyms))
+    //     rules_2 += ((i, symbolMap("inst_to_poly"), i))
+    //     rules_2 += ((symbolMap("inst_to_poly"), i, i))
+    //     rules_2 += ((i+originalNumSyms, symbolMap("poly_to_inst"), i))
+
+    //   }
+      
+    // }
+
 
 
 
@@ -555,126 +728,232 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
 
   
   /** Constrains the types to enforce a subtyping relationship `lhs` <: `rhs`. */
-  def constrain(lhs: SimpleType, rhs: SimpleType)
-      // we need a cache to remember the subtyping tests in process; we also make the cache remember
-      // past subtyping tests for performance reasons (it reduces the complexity of the algoritghm)
-      (implicit cache: MutSet[(SimpleType, SimpleType)] = MutSet.empty)
-  : Unit = {
-    if (lhs is rhs) return
-    val lhs_rhs = lhs -> rhs
-    lhs_rhs match {
-      // There is no need to remember the subtyping tests performed that did not involve
-      // type variables, as type variables will necessary be part of any possible cycles.
-      // Since these types form regular trees, there will necessarily be a point where a
-      // variable part of a cycle will be matched against the same type periodically.
-      case (_: Variable, _) | (_, _: Variable) =>
-        if (cache(lhs_rhs)) return
-        cache += lhs_rhs
-      case _ => ()
-    }
-    lhs_rhs match {
-      case (Function(l0, r0), Function(l1, r1)) =>
-        constrain(l1, l0)
-        constrain(r0, r1)
-      case (Record(fs0), Record(fs1)) =>
-        fs1.foreach { case (n1, t1) =>
-          fs0.find(_._1 === n1).fold(
-            err(s"missing field: $n1 in ${lhs.show}")
-          ) { case (n0, t0) => constrain(t0, t1) }
-        }
-      case (lhs: Variable, rhs) if rhs.level <= lhs.level =>
-        lhs.upperBounds ::= rhs
-        lhs.lowerBounds.foreach(constrain(_, rhs))
-      case (lhs, rhs: Variable) if lhs.level <= rhs.level =>
-        rhs.lowerBounds ::= lhs
-        rhs.upperBounds.foreach(constrain(lhs, _))
-      case (_: Variable, rhs0) =>
-        val rhs = extrude(rhs0, false)(lhs.level, MutMap.empty)
-        constrain(lhs, rhs)
-      case (lhs0, _: Variable) =>
-        val lhs = extrude(lhs0, true)(rhs.level, MutMap.empty)
-        constrain(lhs, rhs)
-      case _ => err(s"cannot constrain ${lhs.show} <: ${rhs.show}")
-    }
-  }
+  // def constrain(lhs: SimpleType, rhs: SimpleType)
+  //     // we need a cache to remember the subtyping tests in process; we also make the cache remember
+  //     // past subtyping tests for performance reasons (it reduces the complexity of the algoritghm)
+  //     (implicit cache: MutSet[(SimpleType, SimpleType)] = MutSet.empty)
+  // : Unit = {
+  //   if (lhs is rhs) return
+  //   val lhs_rhs = lhs -> rhs
+  //   lhs_rhs match {
+  //     // There is no need to remember the subtyping tests performed that did not involve
+  //     // type variables, as type variables will necessary be part of any possible cycles.
+  //     // Since these types form regular trees, there will necessarily be a point where a
+  //     // variable part of a cycle will be matched against the same type periodically.
+  //     case (_: Variable, _) | (_, _: Variable) =>
+  //       if (cache(lhs_rhs)) return
+  //       cache += lhs_rhs
+  //     case _ => ()
+  //   }
+  //   lhs_rhs match {
+  //     case (Function(l0, r0), Function(l1, r1)) =>
+  //       constrain(l1, l0)
+  //       constrain(r0, r1)
+  //     case (Record(fs0), Record(fs1)) =>
+  //       fs1.foreach { case (n1, t1) =>
+  //         fs0.find(_._1 === n1).fold(
+  //           err(s"missing field: $n1 in ${lhs.show}")
+  //         ) { case (n0, t0) => constrain(t0, t1) }
+  //       }
+  //     case (lhs: Variable, rhs) if rhs.level <= lhs.level =>
+  //       lhs.upperBounds ::= rhs
+  //       lhs.lowerBounds.foreach(constrain(_, rhs))
+  //     case (lhs, rhs: Variable) if lhs.level <= rhs.level =>
+  //       rhs.lowerBounds ::= lhs
+  //       rhs.upperBounds.foreach(constrain(lhs, _))
+  //     case (_: Variable, rhs0) =>
+  //       val rhs = extrude(rhs0, false)(lhs.level, MutMap.empty)
+  //       constrain(lhs, rhs)
+  //     case (lhs0, _: Variable) =>
+  //       val lhs = extrude(lhs0, true)(rhs.level, MutMap.empty)
+  //       constrain(lhs, rhs)
+  //     case _ => err(s"cannot constrain ${lhs.show} <: ${rhs.show}")
+  //   }
+  // }
   
   type PolarVariable = (Variable, Boolean)
   
-  /** Copies a type up to its type variables of wrong level (and their extruded bounds). */
-  def extrude(ty: SimpleType, pol: Boolean)
-      (implicit lvl: Int, cache: MutMap[PolarVariable, Variable]): SimpleType =
-      // Note that we need to keep a cache of _polar_ type variables, the idea being that if a
-      // variable v is extruded, two new variables should be created, one for each of v's bounds
-      // (unless of course the variable occurs strictly positively or negatively, in which case
-      // one of the two bounds can be discarded). This way, we essentially create a conservative
-      // approximation of v in the result of the extrusion, and any later instantiation of v
-      // (created at every point the nested let binding is used) will be able to receive
-      // additional constraints independently as long as it is within these approximating bounds.
-    if (ty.level <= lvl) ty else ty match {
-      case Function(l, r) => Function(extrude(l, !pol), extrude(r, pol))
-      case Record(fs) => Record(fs.map(nt => nt._1 -> extrude(nt._2, pol)))
-      case tv: Variable => cache.getOrElse(tv -> pol, {
-        val nvs = freshVar
-        cache += tv -> pol -> nvs
-        if (pol) {
-          tv.upperBounds ::= nvs
-          nvs.lowerBounds = tv.lowerBounds.map(extrude(_, pol))
-        } else {
-          tv.lowerBounds ::= nvs
-          nvs.upperBounds = tv.upperBounds.map(extrude(_, pol))
-        }
-        nvs
-      })
-      case Primitive(_) => ty
-    }
+  
   
   def err(msg: String): Nothing = throw TypeError(msg)
   
   private var freshCount = 0
-  def freshVar(implicit lvl: Int): Variable = new Variable(lvl, Nil, Nil)
+  def freshVar(implicit lvl: Int=0): Variable = new Variable(lvl, Nil, Nil)
   
-  def freshenAbove(lim: Int, ty: SimpleType)(implicit lvl: Int): SimpleType = {
+  def freshenAbove(lim: Int, ty: SimpleType,rels: MutSet[(SimpleType, Int, SimpleType)],types: MutSet[(SimpleType)])(implicit lvl: Int): SimpleType = {
     val freshened = MutMap.empty[Variable, Variable]
-    def freshen(ty: SimpleType): SimpleType = if (ty.level <= lim) ty else ty match {
+    val freshened_fun = MutMap.empty[Function, Function]
+    def freshen(ty: SimpleType,rels: MutSet[(SimpleType, Int, SimpleType)],types: MutSet[(SimpleType)]): SimpleType = if (ty.level <= lim) ty else ty match {
       case tv: Variable =>
         freshened.get(tv) match {
           case Some(tv) => tv
           case None =>
             val v = freshVar
             freshened += tv -> v
+            types += v
+
             // v.lowerBounds = tv.lowerBounds.mapConserve(freshen)
             // v.upperBounds = tv.upperBounds.mapConserve(freshen)
             //  ^ the above are more efficient, but they lead to a different order
             //    of fresh variable creations, which leads to some types not being
             //    simplified the same when put into the RHS of a let binding...
-            v.lowerBounds = tv.lowerBounds.reverse.map(freshen).reverse
-            v.upperBounds = tv.upperBounds.reverse.map(freshen).reverse
+            // v.lowerBounds = tv.lowerBounds.reverse.map(freshen(_, rels, types)).reverse
+            // v.upperBounds = tv.upperBounds.reverse.map(freshen(_, rels, types)).reverse
+            // v.lowerBounds.foreach(lb => {
+            //   rels += ((v, symbolMap("rev"), lb))
+            // })
+            // v.upperBounds.foreach(ub => {
+            //   rels += ((v, symbolMap("empty"), ub))
+            // })
+
+            val relsSeq = rels.toSeq
+            val relsToAdd = MutSet[(SimpleType, Int, SimpleType)]()
+            for (rel <- relsSeq.reverse){
+              
+              if (rel._1==tv){
+                relsToAdd += ((v, rel._2, freshen(rel._3, rels, types)))
+              }
+              if (rel._3==tv){
+                relsToAdd += (( freshen(rel._1, rels, types), rel._2, v))
+              }
+            }
+            rels ++= relsToAdd.toSeq.reverse
             v
         }
-      case Function(l, r) => Function(freshen(l), freshen(r))
-      case Record(fs) => Record(fs.map(ft => ft._1 -> freshen(ft._2)))
+      case Function(l, r) => {
+        freshened_fun.get(Function(l, r)) match {
+          case Some(fun_ty) => fun_ty
+          case None =>
+            val freshend_l = freshen(l,rels, types)
+            val freshend_r = freshen(r,rels, types)
+            val fun_ty = Function(freshend_l,freshend_r)
+            freshened_fun += Function(l, r) -> fun_ty
+            types += fun_ty
+            for (rel <- rels){
+              if (rel._1==Function(l, r)){
+                rels += ((fun_ty, rel._2, freshen(rel._3, rels, types)))
+              }
+              if (rel._3==ty){
+                rels += (( freshen(rel._1, rels, types), rel._2, fun_ty))
+              }
+            }
+            fun_ty
+          }
+        
+      }
+      case Record(fs) =>{
+        val fs_ty = fs.map(ft => ft._1 -> freshen(ft._2,rels, types))
+        val rec_ty = Record(fs_ty)
+        fs_ty.foreach { case (n, t) => 
+          var openSym = 0
+          var closeSym = 0
+          if (symbolMap.contains("rec_" + n + "(")) 
+          {
+            openSym = symbolMap("rec_" + n + "(")
+            closeSym = symbolMap("rec_" + n + ")")
+          }
+          else
+          {
+            openSym = symbolMap.size
+            symbolMap += ("rec_"+n+"(" -> openSym)
+            closeSym = symbolMap.size
+            symbolMap += ("rec_"+n+")" -> closeSym)
+          }
+          
+          rels += ((t, openSym, rec_ty))
+          rels += ((rec_ty, closeSym, t))
+          types += t
+          
+          fieldSet += n 
+        }
+
+
+        types += rec_ty
+        rec_ty
+      } 
       case Primitive(_) => ty
     }
-    freshen(ty)
+    freshen(ty,rels, types)
   }
   
+  def polyInstantiate( poly_body: SimpleType)(implicit rels: MutSet[(SimpleType, Int, SimpleType)], types: MutSet[(SimpleType)], polyRels:MutSet[(SimpleType,SimpleType)]) : SimpleType={
+    val copied = MutMap.empty[Variable, Variable]
+    def copyBody(ty: SimpleType): SimpleType = ty match {
+      case tv: Variable =>
+        copied.get(tv) match {
+          case Some(tv) => tv
+          case None =>
+            val v = freshVar
+            copied += tv -> v
+            types += v
+            v
+        }
+
+      case Function(l, r) =>
+        val l1 = copyBody(l)
+        val r1 = copyBody(r)
+        types += l1
+        types += r1
+        val inst_body = Function(l1,r1)
+        rels += ((l1, symbolMap("f_in("), inst_body))
+        rels += ((inst_body, symbolMap("f_in)"), l1))
+        rels += ((r1, symbolMap("f_out("), inst_body))
+        rels += ((inst_body, symbolMap("f_out)"), r1))
+        
+        inst_body
+      case Record(fs) =>
+        val fs_ty = fs.map { case (n, t) => (n, copyBody(t)) }
+        val inst_body = Record(fs_ty)
+        fs_ty.foreach { case (n, t) => 
+          var openSym = 0
+          var closeSym = 0
+          if (symbolMap.contains("rec_" + n + "(")) 
+          {
+            openSym = symbolMap("rec_" + n + "(")
+            closeSym = symbolMap("rec_" + n + ")")
+          }
+          else
+          {
+            openSym = symbolMap.size
+            symbolMap += ("rec_"+n+"(" -> openSym)
+            closeSym = symbolMap.size
+            symbolMap += ("rec_"+n+")" -> closeSym)
+          }
+          
+          rels += ((t, openSym, inst_body))
+          rels += ((inst_body, closeSym, t))
+          types += t
+          
+          fieldSet += n 
+        }
+        inst_body
+      case Primitive(_) => ty
+    }
+    val tyv = copyBody(poly_body)
+    polyRels+= ((tyv, poly_body))
+
+    tyv
+
+  }
   
   // The data types used for type inference:
   
   /** A type that potentially contains universally quantified type variables,
    *  and which can be isntantiated to a given level. */
   sealed abstract class TypeScheme {
-    def instantiate(implicit lvl: Int): SimpleType
+    def instantiate(implicit lvl: Int,rels: MutSet[(SimpleType, Int, SimpleType)] = MutSet.empty,types: MutSet[(SimpleType)]=MutSet.empty, polyRels: MutSet[(SimpleType,SimpleType)]=MutSet.empty[(SimpleType,SimpleType)]): SimpleType
   }
   /** A type with universally quantified type variables
    *  (by convention, those variables of level greater than `level` are considered quantified). */
   case class PolymorphicType(level: Int, body: SimpleType) extends TypeScheme {
-    def instantiate(implicit lvl: Int) = freshenAbove(level, body)
+    // def instantiate(implicit lvl: Int,rels: MutSet[(SimpleType, Int, SimpleType)],types: MutSet[(SimpleType)]) = freshenAbove(level, body, rels, types)
+    def instantiate(implicit lvl: Int,rels: MutSet[(SimpleType, Int, SimpleType)],types: MutSet[(SimpleType)], polyRels: MutSet[(SimpleType,SimpleType)]) = polyInstantiate(body)
+    // def instantiate(implicit lvl: Int,rels: MutSet[(SimpleType, Int, SimpleType)],types: MutSet[(SimpleType)],  polyRels: MutSet[(SimpleType,SimpleType)]) = body
   }
   /** A type without universally quantified type variables. */
   sealed abstract class SimpleType extends TypeScheme with SimpleTypeImpl {
     def level: Int
-    def instantiate(implicit lvl: Int) = this
+    def instantiate(implicit lvl: Int,rels: MutSet[(SimpleType, Int, SimpleType)],types: MutSet[(SimpleType)],polyRels: MutSet[(SimpleType,SimpleType)]) = this
   }
   case class Function(lhs: SimpleType, rhs: SimpleType) extends SimpleType {
     lazy val level: Int = lhs.level max rhs.level
