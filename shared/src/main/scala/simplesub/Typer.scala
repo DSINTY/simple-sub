@@ -79,7 +79,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     "add" -> Function(IntType, Function(IntType, IntType)),
     "if" -> {
       val v = freshVar(1)
-      PolymorphicType(0, Function(BoolType, Function(v, Function(v, v))), Set.empty[(SimpleType)])
+      PolymorphicType(0, Function(BoolType, Function(v, Function(v, v))), Set.empty[(SimpleType)], false)
     }
   )
 
@@ -120,13 +120,14 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       rels += ((ty, symbolMap("empty"), e_ty))
       rels += ((e_ty, symbolMap("rev"), ty))
       
+      
       types += ty
       e_ty
     } else typeTerm(rhs)(ctx, lvl + 1, rels, types)._1
   
     types += res
 
-    PolymorphicType(lvl, res, mono_types)
+    PolymorphicType(lvl, res, mono_types, isrec)
   }
 
  
@@ -160,7 +161,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
           rels += (( Function(v, Function(v, v)), symbolMap("f_out("), Function(BoolType, Function(v, Function(v, v)))))
           types += Function(BoolType, Function(v, Function(v, v)))
 
-          PolymorphicType(0, Function(BoolType, Function(v, Function(v, v))), Set.empty[(SimpleType)]).instantiate
+          PolymorphicType(0, Function(BoolType, Function(v, Function(v, v))), Set.empty[(SimpleType)], false).instantiate
       }
       else
         ctx.getOrElse(name, err("identifier not found: " + name)).instantiate
@@ -514,6 +515,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
   
 
     def cflConstrain(i:Int, j: Int, sub: Boolean, poly: Boolean) = {
+      println("cflConstrain: ", typesArray(i), typesArray(j), sub, poly)
     
     if (i!=j){
           // if i is variable
@@ -544,7 +546,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
             if (sub)
             typesArray(i).asInstanceOf[Variable].upperBounds ::= typesArray(j)
             else{
-              if (poly || !typesArray(j).isInstanceOf[Variable]){
+              if (!typesArray(j).isInstanceOf[Variable]){
                 typesArray(i).asInstanceOf[Variable].lowerBounds ::= typesArray(j)
               }
               // if (typesArray(j).isInstanceOf[Variable]){
@@ -575,7 +577,9 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       
   }
 
-   
+    // println("rels: %s\n", rels)
+
+    // for ((lhs,sym,rhs) <- rels.toSeq.reverse){
     rels.foreach{case (lhs, sym, rhs) =>
       val i = reverseTypesMap(lhs)
       // println("lhs: %s\n", lhs)
@@ -605,6 +609,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     // }
 
     H_s ++= W
+    W.reverse
 
 
     
@@ -891,7 +896,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     freshen(ty,rels, types)
   }
   
-  def polyInstantiate( poly_body: SimpleType, mono_types: Set[(SimpleType)])(implicit rels: MutSet[(SimpleType, Int, SimpleType)], types: MutSet[(SimpleType)], polyRels:MutSet[(SimpleType,SimpleType)]) : SimpleType={
+  def polyInstantiate( poly_body: SimpleType, mono_types: Set[(SimpleType)], isrec: Boolean)(implicit rels: MutSet[(SimpleType, Int, SimpleType)], types: MutSet[(SimpleType)], polyRels:MutSet[(SimpleType,SimpleType)]) : SimpleType={
     val copied = MutMap.empty[Variable, Variable]
     val copied_fun = MutMap.empty[Function, Function]
     val copied_recs = MutMap.empty[Record, Record]
@@ -1008,6 +1013,10 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
   }
     val tyv = copyBody(poly_body)
     polyRels+= ((tyv, poly_body))
+    if (isrec){
+      rels += ((tyv, symbolMap("empty"), poly_body))
+      rels += ((tyv, symbolMap("rev"), poly_body))
+    }
 
     tyv
 
@@ -1022,10 +1031,13 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
   }
   /** A type with universally quantified type variables
    *  (by convention, those variables of level greater than `level` are considered quantified). */
-  case class PolymorphicType(level: Int, body: SimpleType, mono_types: Set[(SimpleType)]) extends TypeScheme {
+  case class PolymorphicType(level: Int, body: SimpleType, mono_types: Set[(SimpleType)], isrec: Boolean) extends TypeScheme {
     // def instantiate(implicit lvl: Int,rels: MutSet[(SimpleType, Int, SimpleType)],types: MutSet[(SimpleType)]) = freshenAbove(level, body, rels, types)
-    def instantiate(implicit lvl: Int,rels: MutSet[(SimpleType, Int, SimpleType)],types: MutSet[(SimpleType)], polyRels: MutSet[(SimpleType,SimpleType)]) = polyInstantiate(body, mono_types)
+
+    def instantiate(implicit lvl: Int,rels: MutSet[(SimpleType, Int, SimpleType)],types: MutSet[(SimpleType)], polyRels: MutSet[(SimpleType,SimpleType)]) = polyInstantiate(body, mono_types, isrec)
     // def instantiate(implicit lvl: Int,rels: MutSet[(SimpleType, Int, SimpleType)],types: MutSet[(SimpleType)],  polyRels: MutSet[(SimpleType,SimpleType)]) = body
+
+    def isRec = isrec
   }
   /** A type without universally quantified type variables. */
   sealed abstract class SimpleType extends TypeScheme with SimpleTypeImpl {

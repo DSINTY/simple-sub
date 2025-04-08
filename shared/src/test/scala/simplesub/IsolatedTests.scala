@@ -7,7 +7,7 @@ class IsolatedTests extends TypingTestHelpers {
   // with sbt command `~testOnly simplesub.IsolatedTests`
 
   test("isolated") {
-      doTest("let rec trutru = fun g -> trutru (g true) in trutru")
+      doTest("let rec r = fun a -> r in if true then r else r")
   }
 
   // test("monoEquiv"){
