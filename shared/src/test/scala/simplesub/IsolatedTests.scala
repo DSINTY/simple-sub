@@ -7,7 +7,7 @@ class IsolatedTests extends TypingTestHelpers {
   // with sbt command `~testOnly simplesub.IsolatedTests`
 
   test("simple") {
-     doTest("fun y -> let f = fun x -> y x in {a = f 0; b = f true}")
+     doTest("fun i -> if ((i i) true) then true else true")
   }
   
   // test("twice") {

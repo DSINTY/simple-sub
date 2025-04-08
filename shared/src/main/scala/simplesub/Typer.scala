@@ -547,18 +547,27 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
             // val ty = typesArray(j)
             if (sub)
             typesArray(i).asInstanceOf[Variable].upperBounds ::= typesArray(j)
-            else
-              if (poly|| !typesArray(j).isInstanceOf[Variable]){
+            else{
+              if (poly || !typesArray(j).isInstanceOf[Variable]){
                 typesArray(i).asInstanceOf[Variable].lowerBounds ::= typesArray(j)
               }
+              // if (typesArray(j).isInstanceOf[Variable]){
+              //   if (!typesArray(j).asInstanceOf[Variable].upperBounds.contains(typesArray(i))){
+              //     typesArray(i).asInstanceOf[Variable].lowerBounds ::= typesArray(j)
+              //   }
+
+              // }
+            }
             
           }
           // if j is variable
           // if (typesArray(j).isInstanceOf[Variable] && !typesArray(i).isInstanceOf[Variable]){
           //   // val v = typesArray(j).asInstanceOf[Variable]
           //   // val ty = typesArray(i)
-            
+          //   if (sub)
           //   typesArray(j).asInstanceOf[Variable].lowerBounds ::= typesArray(i)
+          //   else 
+          //     typesArray(j).asInstanceOf[Variable].upperBounds ::= typesArray(i)
           //   // W.push((j, symbolMap("rev"), i))
           //   //   H_s += ((j, symbolMap("rev"), i))
           //   //   cols(i)(symbolMap("rev")).insert(j)
