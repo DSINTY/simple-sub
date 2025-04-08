@@ -8,6 +8,7 @@ import scala.util.chaining._
 import scala.annotation.tailrec
 import javax.management.openmbean.SimpleType
 import scala.collection.mutable.ArrayBuffer
+import scala.annotation.elidable
 
 class FastSet(n: Int) {
   // Word size is fixed at 64 bits using Long
@@ -78,7 +79,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     "add" -> Function(IntType, Function(IntType, IntType)),
     "if" -> {
       val v = freshVar(1)
-      PolymorphicType(0, Function(BoolType, Function(v, Function(v, v))))
+      PolymorphicType(0, Function(BoolType, Function(v, Function(v, v))), Set.empty[(SimpleType)])
     }
   )
 
@@ -109,6 +110,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
   
   /** Infer the type of a let binding right-hand side. */
   def typeLetRhs(isrec: Boolean, nme: String, rhs: Term)(implicit ctx: Ctx, lvl: Int,rels: MutSet[(SimpleType, Int, SimpleType)],types: MutSet[(SimpleType)],polyRels: MutSet[(SimpleType,SimpleType)]): PolymorphicType = {
+    val mono_types = types.toSet[(SimpleType)]
     val res = if (isrec) {
       val e_ty = freshVar(lvl + 1)
       val ty = typeTerm(rhs)(ctx + (nme -> e_ty), lvl + 1, rels, types)._1
@@ -119,9 +121,10 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       types += ty
       e_ty
     } else typeTerm(rhs)(ctx, lvl + 1, rels, types)._1
+  
     types += res
 
-    PolymorphicType(lvl, res)
+    PolymorphicType(lvl, res, mono_types)
   }
 
  
@@ -155,27 +158,30 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
           rels += (( Function(v, Function(v, v)), symbolMap("f_out("), Function(BoolType, Function(v, Function(v, v)))))
           types += Function(BoolType, Function(v, Function(v, v)))
 
-          PolymorphicType(0, Function(BoolType, Function(v, Function(v, v)))).instantiate
+          PolymorphicType(0, Function(BoolType, Function(v, Function(v, v))), Set.empty[(SimpleType)]).instantiate
       }
       else
         ctx.getOrElse(name, err("identifier not found: " + name)).instantiate
     }
       case Lam(name, body) =>
         val param = freshVar
+         types += param
         val body_ty = typeTerm(body)(ctx + (name -> param), lvl, rels, types, polyRels)._1
         rels += ((param, symbolMap("f_in("), Function(param, body_ty)))
         rels += ((body_ty, symbolMap("f_out("), Function(param, body_ty)))
         rels += ((Function(param, body_ty), symbolMap("f_in)"), param))
         rels += ((Function(param, body_ty), symbolMap("f_out)"), body_ty))
-        types += param
+       
         types += body_ty
         Function(param, body_ty)
       case App(f, a) =>
         val f_ty = typeTerm(f)._1
-        val a_ty = typeTerm(a)._1
-        types += Function(a_ty, res)
-        types += a_ty
         types += f_ty
+        val a_ty = typeTerm(a)._1
+        types += a_ty
+        types += Function(a_ty, res)
+        
+       
         rels += ((a_ty, symbolMap("f_in("), Function(a_ty, res)))
         rels += ((Function(a_ty, res), symbolMap("f_in)"), a_ty))
         rels += ((Function(a_ty, res), symbolMap("f_out)"), res))
@@ -266,7 +272,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     val rules_1 = MutSet.empty[(Int, Int)]
     val rules_2 = MutSet.empty[(Int, Int, Int)]
     val rules_3 = MutSet.empty[(Int, Int, Int, Int)]
-    println("PolyRels: ", polyRels)
+    // println("PolyRels: ", polyRels)
 
     for (primType <- Seq(BoolType, IntType)){
     rels += ((primType, symbolMap("f_in("), Function(primType, primType)))
@@ -490,17 +496,6 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         //  rules_2 += ((symbolMap(sym_A_name+"_poly_open_"+i),symbolMap(sym_B1_name+"_poly_open_"+i), sym_B2))
       }
   
-
-    
-
-    
-    
-
-    
-
-
-    
-
     var num_syms = symbolMap.size
     val num_types = types.size
 
@@ -614,13 +609,21 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     
 
     // println(W)
+    // for ((i, sym, j) <- W){
+    //   val sym_name = symbolMap.find(_._2 == sym).map(_._1).getOrElse(s"unknown_symbol_$sym")
+    //   println("sym_name: ", sym_name, "i: ", "j:", j)
+    // }
 
     while (W.nonEmpty){
       val (u,sym_B,v) = W.pop()
+      val sym_B_name = symbolMap.find(_._2 == sym_B).map(_._1).getOrElse(s"unknown_symbol_$sym_B")
+      // println( sym_B_name,  u,  v)
+
       rules_1.foreach{case (sym_A, sym_B1) =>
         if (sym_B1==sym_B) {
           if (sym_A==symbolMap("S")) cflConstrain(u, v, true, false)
           W.push((u, sym_A, v))
+          val sym_A_name = symbolMap.find(_._2 == sym_A).map(_._1).getOrElse(s"unknown_symbol_$sym_A")
           H_s += ((u, sym_A, v))
           cols(v)(sym_A).insert(u)
           rows(u)(sym_A).insert(v)
@@ -885,33 +888,65 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     freshen(ty,rels, types)
   }
   
-  def polyInstantiate( poly_body: SimpleType)(implicit rels: MutSet[(SimpleType, Int, SimpleType)], types: MutSet[(SimpleType)], polyRels:MutSet[(SimpleType,SimpleType)]) : SimpleType={
+  def polyInstantiate( poly_body: SimpleType, mono_types: Set[(SimpleType)])(implicit rels: MutSet[(SimpleType, Int, SimpleType)], types: MutSet[(SimpleType)], polyRels:MutSet[(SimpleType,SimpleType)]) : SimpleType={
     val copied = MutMap.empty[Variable, Variable]
-    def copyBody(ty: SimpleType): SimpleType = ty match {
+    val copied_fun = MutMap.empty[Function, Function]
+    // val copiedFunc = MutMap.empty[Function, Function]
+    // for (ty <- types) {
+    //   if (ty.isInstanceOf[Variable]) {
+    //     val v = ty.asInstanceOf[Variable]
+    //     copied += v -> v
+    //   }
+    // }
+    def copyBody(ty: SimpleType): SimpleType = {
+      println("copying body", ty)
+      var copy = false
+    val inst_ty =ty match {
       case tv: Variable =>
         copied.get(tv) match {
-          case Some(tv) => tv
+          case Some(tv) => {
+            // copy = false
+            tv
+          }
           case None =>
-            val v = freshVar
-            copied += tv -> v
-            types += v
-            v
+            if (mono_types.contains(ty)) return ty
+            else{
+              val v = freshVar
+              copied += tv -> v
+              types += v
+              copy = true
+              v
+            }
         }
 
       case Function(l, r) =>
-        val l1 = copyBody(l)
-        val r1 = copyBody(r)
-        types += l1
-        types += r1
-        val inst_body = Function(l1,r1)
-        rels += ((l1, symbolMap("f_in("), inst_body))
-        rels += ((inst_body, symbolMap("f_in)"), l1))
-        rels += ((r1, symbolMap("f_out("), inst_body))
-        rels += ((inst_body, symbolMap("f_out)"), r1))
-        
-        inst_body
+
+        copied_fun.get(Function(l, r)) match {
+          case Some(fun_ty) => fun_ty
+          case None =>
+            val l1 = copyBody(l)
+            val r1 = copyBody(r)
+            types += l1
+            types += r1
+            val inst_body = Function(l1,r1)
+            rels += ((l1, symbolMap("f_in("), inst_body))
+            rels += ((inst_body, symbolMap("f_in)"), l1))
+            rels += ((r1, symbolMap("f_out("), inst_body))
+            rels += ((inst_body, symbolMap("f_out)"), r1))
+            if (l1!= l || r1 != r) {
+              copy = true
+              copied_fun += Function(l, r) -> inst_body
+              types += inst_body
+            }
+            
+            inst_body
+          }
       case Record(fs) =>
-        val fs_ty = fs.map { case (n, t) => (n, copyBody(t)) }
+        val fs_ty = fs.map { case (n, t) =>{
+          val copyBody_t= copyBody(t)
+          if (copyBody_t != t) copy = true
+          n -> copyBody_t
+         } }
         val inst_body = Record(fs_ty)
         fs_ty.foreach { case (n, t) => 
           var openSym = 0
@@ -935,9 +970,24 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
           
           fieldSet += n 
         }
+        types += inst_body
         inst_body
       case Primitive(_) => ty
     }
+    if (copy){
+      for ((u,sym,v) <- rels){
+        if (u==ty && mono_types.contains(v)){
+          rels += ((inst_ty, sym, v))
+        }
+        if (v==ty && mono_types.contains(u)){
+          rels += ((u, sym, inst_ty))
+        }
+
+      }
+    }
+
+    inst_ty
+  }
     val tyv = copyBody(poly_body)
     polyRels+= ((tyv, poly_body))
 
@@ -954,9 +1004,9 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
   }
   /** A type with universally quantified type variables
    *  (by convention, those variables of level greater than `level` are considered quantified). */
-  case class PolymorphicType(level: Int, body: SimpleType) extends TypeScheme {
+  case class PolymorphicType(level: Int, body: SimpleType, mono_types: Set[(SimpleType)]) extends TypeScheme {
     // def instantiate(implicit lvl: Int,rels: MutSet[(SimpleType, Int, SimpleType)],types: MutSet[(SimpleType)]) = freshenAbove(level, body, rels, types)
-    def instantiate(implicit lvl: Int,rels: MutSet[(SimpleType, Int, SimpleType)],types: MutSet[(SimpleType)], polyRels: MutSet[(SimpleType,SimpleType)]) = polyInstantiate(body)
+    def instantiate(implicit lvl: Int,rels: MutSet[(SimpleType, Int, SimpleType)],types: MutSet[(SimpleType)], polyRels: MutSet[(SimpleType,SimpleType)]) = polyInstantiate(body, mono_types)
     // def instantiate(implicit lvl: Int,rels: MutSet[(SimpleType, Int, SimpleType)],types: MutSet[(SimpleType)],  polyRels: MutSet[(SimpleType,SimpleType)]) = body
   }
   /** A type without universally quantified type variables. */

@@ -6,9 +6,13 @@ class IsolatedTests extends TypingTestHelpers {
   // This test class is for isolating single tests and running them alone
   // with sbt command `~testOnly simplesub.IsolatedTests`
 
-  test("simple") {
-     doTest("fun i -> if ((i i) true) then true else true")
+  test("isolated") {
+     doTest("fun y -> let f = fun x -> x in {a = f y; b = f true}")
   }
+
+  // test("monoEquiv"){
+  //   doTest("fun y -> fun x -> y x")
+  // }
   
   // test("twice") {
     

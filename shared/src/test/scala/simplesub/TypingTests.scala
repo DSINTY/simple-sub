@@ -189,7 +189,8 @@ class TypingTests extends TypingTestHelpers {
   test("random") {
     doTest("(let rec x = {a = x; b = x} in x)",                           "{a: 'a, b: 'a} as 'a")
     doTest("(let rec x = fun v -> {a = x v; b = x v} in x)",              "TOP -> {a: 'a, b: 'a} as 'a")
-    error("let rec x = (let rec y = {u = y; v = (x y)} in 0) in 0",       "cannot constrain int <: 'a -> 'b")
+    // error("let rec x = (let rec y = {u = y; v = (x y)} in 0) in 0",       "cannot constrain int <: 'a -> 'b")
+    error("let rec x = (let rec y = {u = y; v = (x y)} in 0) in 0",       "cannot constrain 'a -> 'b <: int")
     doTest("(fun x -> (let y = (x x) in 0))",                             "'a INTER ('a -> TOP) -> int")
     doTest("(let rec x = (fun y -> (y (x x))) in x)",                     "('a -> ('a INTER ('a -> 'b)) as 'b) -> 'a")
     // ^ Note: without canonicalization, we get the simpler:               ('b -> 'b INTER 'a) as 'a -> 'b

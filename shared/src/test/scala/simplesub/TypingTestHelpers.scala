@@ -20,11 +20,12 @@ class TypingTestHelpers extends AnyFunSuite {
     val typer = new Typer(dbg) with TypeSimplifier
     val (tyi, rels, types, polyRels) = typer.inferType(term)
     // val rels, types = typer.subtypeRel(term)
-    // if (dbg) {
-      // println("term: " + term)
-      // println("rels: " + rels)
-      // println("types: " + types)
-    // }
+    if (dbg) {
+      println("term: " + term)
+      println("rels: " + rels)
+      println("types: " + types)
+      println("polyRels: " + polyRels)
+    }
     val tyv = typer.cflReach(tyi, rels, types, polyRels)
     if (dbg) {
       println("inferred: " + tyv)
