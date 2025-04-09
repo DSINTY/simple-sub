@@ -1013,10 +1013,10 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
   }
     val tyv = copyBody(poly_body)
     polyRels+= ((tyv, poly_body))
-    if (isrec){
-      rels += ((tyv, symbolMap("empty"), poly_body))
-      rels += ((tyv, symbolMap("rev"), poly_body))
-    }
+    // if (isrec){
+    //   rels += ((tyv, symbolMap("empty"), poly_body))
+    //   rels += ((tyv, symbolMap("rev"), poly_body))
+    // }
 
     tyv
 
