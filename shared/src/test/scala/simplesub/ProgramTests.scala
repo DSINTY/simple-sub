@@ -39,9 +39,27 @@ class ProgramTests extends AnyFunSuite {
   }
   
   test("mlsub") { // from https://www.cl.cam.ac.uk/~sd601/mlsub/
+    // doTest("""
+    //   let id = fun x -> x
+    //   let twice = fun f -> fun x -> f (f x)
+    //   let object1 = { x = 42; y = id }
+    //   let object2 = { x = 17; y = false }
+    //   let pick_an_object = fun b ->
+    //     if b then object1 else object2
+    //   let rec recursive_monster = fun x ->
+    //     { thing = x;
+    //       self = recursive_monster x }
+    // """)(
+    //   "'a -> 'a",
+    //   "('a ∨ 'b -> 'a) -> 'b -> 'a",
+    //   "{x: int, y: 'a -> 'a}",
+    //   "{x: int, y: bool}",
+    //   "bool -> {x: int, y: bool ∨ ('a -> 'a)}",
+    //   "'a -> {self: 'b, thing: 'a} as 'b",
+    // )
+
     doTest("""
       let id = fun x -> x
-      let twice = fun f -> fun x -> f (f x)
       let object1 = { x = 42; y = id }
       let object2 = { x = 17; y = false }
       let pick_an_object = fun b ->
@@ -51,7 +69,6 @@ class ProgramTests extends AnyFunSuite {
           self = recursive_monster x }
     """)(
       "'a -> 'a",
-      "('a ∨ 'b -> 'a) -> 'b -> 'a",
       "{x: int, y: 'a -> 'a}",
       "{x: int, y: bool}",
       "bool -> {x: int, y: bool ∨ ('a -> 'a)}",

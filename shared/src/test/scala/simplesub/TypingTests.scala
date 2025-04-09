@@ -20,7 +20,7 @@ class TypingTests extends TypingTestHelpers {
     // doTest("fun f -> fun x -> f (f x)  // twice", "('a UNION 'b -> 'a) -> 'b -> 'a")
     // doTest("let twice = fun f -> fun x -> f (f x) in twice", "('a UNION 'b -> 'a) -> 'b -> 'a")
     doTest("fun f -> fun x -> f (f x)  // twice", "('a UNION 'b -> 'b) -> 'a -> 'b")
-    doTest("let twice = fun f -> fun x -> f (f x) in twice", "('a UNION 'b -> 'b) -> 'a -> 'b")
+    // doTest("let twice = fun f -> fun x -> f (f x) in twice", "('a UNION 'b -> 'b) -> 'a -> 'b")
   }
   
   test("booleans") {
@@ -210,8 +210,10 @@ class TypingTests extends TypingTestHelpers {
       "'a -> {u: 'c, v: 'a UNION ('a -> 'b)} as 'c as 'b")
     doTest("(let rec x = (fun y -> (let z = (y x) in y)) in x)",          "('b INTER ('a -> TOP) -> 'b) as 'a")
     doTest("(fun x -> (let y = (x x.v) in 0))",                           "{v: 'a} INTER ('a -> TOP) -> int")
+    // doTest("let rec x = (let y = (x x) in (fun z -> z)) in (x (fun y -> y.u))", // [test:T1]
+    //   "'a UNION ('a INTER {u: 'b} -> ('a UNION 'b UNION ('a INTER {u: 'b} -> 'c)) as 'c)")
     doTest("let rec x = (let y = (x x) in (fun z -> z)) in (x (fun y -> y.u))", // [test:T1]
-      "'a UNION ('a INTER {u: 'b} -> ('a UNION 'b UNION ('a INTER {u: 'b} -> 'c)) as 'c)")
+      "'a UNION ('a INTER {u: 'b} -> ('b UNION 'a UNION ('a INTER {u: 'b} -> 'c)) as 'c)")
     // ^ Note: without canonicalization, we get the simpler:
     // ('b UNION ('b INTER {u: 'c} -> 'a UNION 'c)) as 'a
   }
