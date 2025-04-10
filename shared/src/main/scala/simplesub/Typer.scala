@@ -603,11 +603,12 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
             // val v = typesArray(i).asInstanceOf[Variable]
             // val ty = typesArray(j)
             if (sub)
+              
             typesArray(i).asInstanceOf[Variable].upperBounds ::= typesArray(j)
             else{
-              // if (!typesArray(j).isInstanceOf[Variable]){
+              if (!typesArray(j).isInstanceOf[Variable]){
                 typesArray(i).asInstanceOf[Variable].lowerBounds ::= typesArray(j)
-              // }
+              }
               // if (typesArray(j).isInstanceOf[Variable]){
               //   if (!typesArray(j).asInstanceOf[Variable].upperBounds.contains(typesArray(i))){
               //     typesArray(i).asInstanceOf[Variable].lowerBounds ::= typesArray(j)
@@ -764,40 +765,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       
     }
 
-    // for ((u,sym_A,v) <- H_s){
-    //   val sym_A_name = symbolMap.find(_._2 == sym_A).map(_._1).getOrElse(s"unknown_symbol_$sym_A")
-    //   println(typesArray(u), sym_A_name, typesArray(v))
-    // }
-
-
-
-    // handle polymorphic types
-    // loop through SymbolMap
-    // val PolySymMap = MutMap.empty[String, Int]
-    // // val num_syms = symbolMap.size
-    // val originalNumSyms = symbolMap.size
     
-    // for ((sym, i) <- symbolMap){
-    //   PolySymMap += (sym+"_poly" -> (i+num_syms))
-    // }
-    // num_syms += num_syms
-    // symbolMap ++= PolySymMap
-    // symbolMap+= ("inst_to_poly" -> (num_syms+1))
-    // symbolMap+= ("poly_to_inst" -> (num_syms+2))
-    // num_syms += 2
-
-    // for ((sym, i) <- symbolMap){
-    //   if (i<originalNumSyms){
-    //     rules_2 += ((i, symbolMap("inst_to_poly"), i+originalNumSyms))
-    //     rules_2 += ((symbolMap("inst_to_poly"), i , i+originalNumSyms))
-    //     rules_2 += ((i, symbolMap("inst_to_poly"), i))
-    //     rules_2 += ((symbolMap("inst_to_poly"), i, i))
-    //     rules_2 += ((i+originalNumSyms, symbolMap("poly_to_inst"), i))
-
-    //   }
-      
-    // }
-
     // restore original symbol map
     symbolMap = original_symbolMap.clone()
     
@@ -809,49 +777,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
   }
 
   
-  /** Constrains the types to enforce a subtyping relationship `lhs` <: `rhs`. */
-  // def constrain(lhs: SimpleType, rhs: SimpleType)
-  //     // we need a cache to remember the subtyping tests in process; we also make the cache remember
-  //     // past subtyping tests for performance reasons (it reduces the complexity of the algoritghm)
-  //     (implicit cache: MutSet[(SimpleType, SimpleType)] = MutSet.empty)
-  // : Unit = {
-  //   if (lhs is rhs) return
-  //   val lhs_rhs = lhs -> rhs
-  //   lhs_rhs match {
-  //     // There is no need to remember the subtyping tests performed that did not involve
-  //     // type variables, as type variables will necessary be part of any possible cycles.
-  //     // Since these types form regular trees, there will necessarily be a point where a
-  //     // variable part of a cycle will be matched against the same type periodically.
-  //     case (_: Variable, _) | (_, _: Variable) =>
-  //       if (cache(lhs_rhs)) return
-  //       cache += lhs_rhs
-  //     case _ => ()
-  //   }
-  //   lhs_rhs match {
-  //     case (Function(l0, r0), Function(l1, r1)) =>
-  //       constrain(l1, l0)
-  //       constrain(r0, r1)
-  //     case (Record(fs0), Record(fs1)) =>
-  //       fs1.foreach { case (n1, t1) =>
-  //         fs0.find(_._1 === n1).fold(
-  //           err(s"missing field: $n1 in ${lhs.show}")
-  //         ) { case (n0, t0) => constrain(t0, t1) }
-  //       }
-  //     case (lhs: Variable, rhs) if rhs.level <= lhs.level =>
-  //       lhs.upperBounds ::= rhs
-  //       lhs.lowerBounds.foreach(constrain(_, rhs))
-  //     case (lhs, rhs: Variable) if lhs.level <= rhs.level =>
-  //       rhs.lowerBounds ::= lhs
-  //       rhs.upperBounds.foreach(constrain(lhs, _))
-  //     case (_: Variable, rhs0) =>
-  //       val rhs = extrude(rhs0, false)(lhs.level, MutMap.empty)
-  //       constrain(lhs, rhs)
-  //     case (lhs0, _: Variable) =>
-  //       val lhs = extrude(lhs0, true)(rhs.level, MutMap.empty)
-  //       constrain(lhs, rhs)
-  //     case _ => err(s"cannot constrain ${lhs.show} <: ${rhs.show}")
-  //   }
-  // }
+  
   
   type PolarVariable = (Variable, Boolean)
   
