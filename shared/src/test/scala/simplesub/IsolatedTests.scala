@@ -10,7 +10,7 @@ class IsolatedTests extends TypingTestHelpers {
     
     // put your test here
     
-    // doTest("fun f -> fun x -> f (f x)")
+    doTest("(let x = (fun y -> (y 0)) in (let y = {u = x} in y))")
     
   }
   

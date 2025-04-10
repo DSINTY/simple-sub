@@ -23,16 +23,16 @@ object MLsubTests extends scala.App {{
   // Uncomment the latter settings for the full n = 1,313,832 tests
   
   // n == 799
-  val StartP = 50
-  val MultP = 0.11
-  val fieldNames = "u" :: "v" :: Nil
-  val varNames = "x" :: "y" :: "z" :: Nil
+  // val StartP = 50
+  // val MultP = 0.11
+  // val fieldNames = "u" :: "v" :: Nil
+  // val varNames = "x" :: "y" :: "z" :: Nil
   
   // // n == 1313832
-  // val StartP = 200
-  // val MultP = 0.11
-  // val fieldNames = "u" :: "v" :: "w" :: Nil
-  // val varNames = "x" :: "y" :: "z" :: "s" :: "t" :: Nil
+  val StartP = 200
+  val MultP = 0.11
+  val fieldNames = "u" :: "v" :: "w" :: Nil
+  val varNames = "x" :: "y" :: "z" :: "s" :: "t" :: Nil
   
   
   // Enumerate expressions based on StartP and MultP
@@ -72,7 +72,7 @@ object MLsubTests extends scala.App {{
   val typeErrStr = "<type error>"
   
   val mlsub = new MLsub
-  val typer = new Typer(dbg = false) with TypeSimplifier
+  
   var tested = 0
   var wellTyped, illTyped = 0
   var notWellTyped, notIllTyped, notSub, notSup = 0
@@ -85,6 +85,7 @@ object MLsubTests extends scala.App {{
     out.println(s"==== ${tested} ====  $str")
     
     val ans = try {
+      val typer = new Typer(dbg = false) with TypeSimplifier
       val ty = typer.inferType(trm)
       val cty = typer.compactType(ty)
       val sty = typer.simplifyType(cty)
