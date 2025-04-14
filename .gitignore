@@ -8,3 +8,5 @@ project/metals.sbt
 project/project/
 **.worksheet.sc
 mlsub/
+test_results_0.11-50.txt
+test_results_0.11-200.txt

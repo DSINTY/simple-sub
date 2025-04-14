@@ -896,9 +896,12 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     //     copied += v -> v
     //   }
     // }
+    
     var caller = poly_body
+    // val original_rels = rels.clone()
+    val new_rels = MutSet.empty[(SimpleType, Int, SimpleType)]
     def copyBody(ty: SimpleType): SimpleType = {
-      // println("copying body", ty)
+      println("copying body", ty)
       var copy = false
       val prev_caller = caller
       caller = ty
@@ -938,12 +941,14 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
             types += l1
             types += r1
             val inst_body = Function(l1,r1)
-            rels += ((l1, symbolMap("f_in("), inst_body))
-            rels += ((inst_body, symbolMap("f_in)"), l1))
-            rels += ((r1, symbolMap("f_out("), inst_body))
-            rels += ((inst_body, symbolMap("f_out)"), r1))
             if (l1!= l || r1 != r) {
+            // new_rels += ((l1, symbolMap("f_in("), inst_body))
+            // new_rels += ((inst_body, symbolMap("f_in)"), l1))
+            // new_rels += ((r1, symbolMap("f_out("), inst_body))
+            // new_rels += ((inst_body, symbolMap("f_out)"), r1))
+            
               copy = true
+              println("copy true")
               copied_fun += Function(l, r) -> inst_body
               types += inst_body
             }
@@ -954,6 +959,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         copied_recs.get(Record(fs)) match {
           case Some(rec_ty) => rec_ty
           case None =>
+            // copy = true
             val fs_ty = fs.map { case (n, t) =>{
             val copyBody_t= copyBody(t)
             if (copyBody_t != t) copy = true
@@ -976,8 +982,8 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
               symbolMap += ("rec_"+n+")" -> closeSym)
             }
             
-            rels += ((t, openSym, inst_body))
-            rels += ((inst_body, closeSym, t))
+            // new_rels += ((t, openSym, inst_body))
+            // new_rels += ((inst_body, closeSym, t))
             types += t
             
             fieldSet += n 
@@ -992,6 +998,12 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     }
     if (copy){
       // polyRels += ((inst_ty, ty))
+      for ((u,sym,v)<- rels){
+        if (u==ty){
+          val sym_name = symbolMap.find(_._2 == sym).map(_._1).getOrElse(s"unknown_symbol_$sym")
+          println("rels", u, sym_name, v)
+        }
+      }
       for ((u,sym,v) <- rels){
         // if (u==ty && mono_types.contains(v)){
         //   rels += ((inst_ty, sym, v))
@@ -999,11 +1011,22 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         // if (v==ty && mono_types.contains(u)){
         //   rels += ((u, sym, inst_ty))
         // }
+
         if (u==ty ){
-          rels += ((inst_ty, sym, copyBody(v)))
+          val copied_v = copyBody(v)
+          val sym_name = symbolMap.find(_._2 == sym).map(_._1).getOrElse(s"unknown_symbol_$sym")
+          println("rels", u, sym_name, v)
+          new_rels += ((inst_ty, sym, copied_v))
+          println("new rel", inst_ty, sym_name, copied_v)
         }
         if (v==ty ){
-          rels += ((copyBody(u), sym, inst_ty))
+          val copied_u = copyBody(u)
+          if (copied_u == u){
+            new_rels += ((copied_u, sym, inst_ty))
+            val sym_name = symbolMap.find(_._2 == sym).map(_._1).getOrElse(s"unknown_symbol_$sym")
+            println("rels", u, sym_name, v)
+            println("new rel", copied_u, sym_name, inst_ty)
+          }
         }
 
 
@@ -1044,12 +1067,15 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     //   }
     // }
     val tyv = copyBody(poly_body)
+
     polyRels+= ((tyv, poly_body))
     // if (isrec){
     //   rels += ((tyv, symbolMap("empty"), poly_body))
     //   rels += ((tyv, symbolMap("rev"), poly_body))
     // }
 
+
+    rels ++= new_rels
     tyv
 
   }
