@@ -49,9 +49,9 @@ object MLsubTests extends scala.App {{
         val rctx = ctx._2.tail
         rec(newP) { b =>
           emit(Lam(vn, b))
-          // rec(newP) { v =>
-          //   emit(Let(v.freeVars(vn), vn, v, b))
-          // }(lctx, rctx)
+          rec(newP) { v =>
+            emit(Let(v.freeVars(vn), vn, v, b))
+          }(lctx, rctx)
         }(lctx, rctx)
       }
       for (fn0 <- fieldNames) {
