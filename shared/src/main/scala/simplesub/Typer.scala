@@ -129,7 +129,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
   
   /** Infer the type of a let binding right-hand side. */
   def typeLetRhs(isrec: Boolean, nme: String, rhs: Term)(implicit ctx: Ctx, lvl: Int,rels: MutSet[(SimpleType, Int, SimpleType)],types: MutSet[(SimpleType)],polyRels: MutSet[(SimpleType,SimpleType)]): PolymorphicType = {
-    var mono_types = types.toSet[(SimpleType)]
+    val mono_types = types.toSet[(SimpleType)]
     val res = if (isrec) {
       val e_ty = freshVar(lvl + 1)
       types += e_ty
@@ -142,7 +142,13 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       
       types += ty
       e_ty
-    } else typeTerm(rhs)(ctx, lvl + 1, rels, types)._1
+    } else {
+      val (rhsType, rhsRels, rhsTypes, rhsPolyRels) = typeTerm(rhs)(ctx, lvl + 1, rels, types, polyRels)
+      rels ++= rhsRels
+      types ++= rhsTypes
+      polyRels ++= rhsPolyRels
+      rhsType
+    }
   
     types += res
 
@@ -168,6 +174,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     val tyv = term match {
       case Var(name) =>{
         if (name == "if") {
+          val mono_types = types.toSet[(SimpleType)] 
           val v = freshVar(1)
           // val ty = Function(BoolType, Function(v, Function(v, v)))
           types += v
@@ -189,7 +196,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
           rels += (( Function(v, Function(v, v)), symbolMap("f_out("), Function(BoolType, Function(v, Function(v, v)))))
           types += Function(BoolType, Function(v, Function(v, v)))
 
-          PolymorphicType(0, Function(BoolType, Function(v, Function(v, v))), Set.empty[(SimpleType)], Set.empty[(SimpleType)], false).instantiate
+          PolymorphicType(0, Function(BoolType, Function(v, Function(v, v))), mono_types, Set.empty[(SimpleType)], false).instantiate
       }
       else
         ctx.getOrElse(name, err("identifier not found: " + name)).instantiate
@@ -252,7 +259,13 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
           fieldSet += name 
         res
       case Rcd(fs) =>
-        val fs_ty = fs.map { case (n, t) => (n, typeTerm(t)._1) }
+        val fs_ty = fs.map { case (n, t) => 
+          val (fieldType, fieldRels, fieldTypes, fieldPolyRels) = typeTerm(t)
+          rels ++= fieldRels
+          types ++= fieldTypes
+          polyRels ++= fieldPolyRels
+          (n, fieldType)
+        }
         val ty = Record(fs_ty)
         fs_ty.foreach { case (n, t) => 
           var openSym = 0
@@ -279,8 +292,12 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         ty
       case Let(isrec, nme, rhs, bod) =>
         val n_ty = typeLetRhs(isrec, nme, rhs)(ctx, lvl, rels, types, polyRels)
-        typeTerm(bod)(ctx + (nme -> n_ty), lvl, rels, types, polyRels)._1
-        // typeTerm(bod)(ctx + (nme -> n_ty), lvl, rels, types)._1
+        // Make sure to use the result of typeTerm properly and merge all relations
+        val (bodyType, bodyRels, bodyTypes, bodyPolyRels) = typeTerm(bod)(ctx + (nme -> n_ty), lvl, rels, types, polyRels)
+        rels ++= bodyRels
+        types ++= bodyTypes
+        polyRels ++= bodyPolyRels
+        bodyType
 
     }
     types += tyv
@@ -303,7 +320,6 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     val rules_1 = MutSet.empty[(Int, Int)]
     val rules_2 = MutSet.empty[(Int, Int, Int)]
     val rules_3 = MutSet.empty[(Int, Int, Int, Int)]
-    // println("PolyRels: ", polyRels)
 
     for (primType <- Seq(BoolType, IntType)){
     rels += ((primType, symbolMap("f_in("), Function(primType, primType)))
@@ -334,25 +350,9 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       rules_2 += ((N_sym,N_sym, N_sym))
       rules_1 += ((N_sym,symbolMap(termSym(N))))
       rules_3 += ((N_sym,symbolMap("f_out("), N_sym, symbolMap("f_out)")))
-      // val f_outN = symbolMap.size
-      // symbolMap += ("f_out("+N -> f_outN)
-      // rules_2 += ((f_outN, symbolMap("f_out("), N_sym))
-      // rules_2 += ((N_sym, f_outN, symbolMap("f_out)")))
       rules_3 += ((N_sym,symbolMap("f_in("), N_sym_opp, symbolMap("f_in)")))
-      // val f_inN = symbolMap.size
-      // symbolMap += (opp(N)+"f_in)" -> f_inN)
-      // rules_2 += ((f_inN, N_sym_opp,symbolMap("f_in)")))
-      // rules_2 += ((N_sym, symbolMap("f_in("), f_inN))
-      // symbolMap += ("f_in("+N -> f_inN)
-      // rules_2 += ((f_inN, symbolMap("f_in("), N_sym_opp))
-      // rules_2 += ((N_sym, f_inN, symbolMap("f_in)")))
-
       for (n<-fieldSet){
         rules_3 += ((N_sym,symbolMap("rec_"+n+"("), N_sym, symbolMap("rec_"+n+")")))
-        // val rec_N = symbolMap.size
-        // symbolMap += ("rec_"+n+"("+N -> rec_N)
-        // rules_2 += ((rec_N, symbolMap("rec_"+n+"("), N_sym))
-        // rules_2 += ((N_sym, rec_N, symbolMap("rec_"+n+")")))
 
       }
     }
@@ -403,8 +403,6 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       
       
       symbolMap ++= poly_symbolMap
-      // rels += ((polyRel._1,symbolMap(("S_poly_open_"+i)),polyRel._2 ))
-      // rels += ((polyRel._2,symbolMap(("S_poly_close_"+i)),polyRel._1 ))
       rels += ((polyRel._1,symbolMap(("R_poly_open_"+i)),polyRel._2 ))
       rels += ((polyRel._2,symbolMap(("R_poly_close_"+i)),polyRel._1 ))
       for ((sym_A,sym_B1,sym_B2)<-original_rules_2){
@@ -412,27 +410,12 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
          val sym_A_name = symbolMap.find(_._2 == sym_A).map(_._1).getOrElse(s"unknown_symbol_$sym_A")
          val sym_B1_name = symbolMap.find(_._2 == sym_B1).map(_._1).getOrElse(s"unknown_symbol_$sym_B1")
          val sym_B2_name = symbolMap.find(_._2 == sym_B2).map(_._1).getOrElse(s"unknown_symbol_$sym_B2")
-         
-        //  rules_2 += ((symbolMap(sym_A_name+"_poly_open_"+i),sym_B1, symbolMap(sym_B2_name+"_poly_open_"+i)))
          rules_2 += ((sym_A,symbolMap(sym_B1_name+"_poly_open_"+i), symbolMap(sym_B2_name+"_poly_close_"+i)))
-        //  rules_2 += ((symbolMap(sym_A_name+"_poly_open_"+i),symbolMap(sym_B1_name+"_poly_open_"+i), sym_B2))
       }
       
      
 
-      // for ((sym_A, sym_B1, sym_B2, sym_B3) <- original_rules_3){
-      //   val sym_A_name = symbolMap.find(_._2 == sym_A).map(_._1).getOrElse(s"unknown_symbol_$sym_A")
-      //   val sym_B1_name = symbolMap.find(_._2 == sym_B1).map(_._1).getOrElse(s"unknown_symbol_$sym_B1")
-      //   val sym_B2_name = symbolMap.find(_._2 == sym_B2).map(_._1).getOrElse(s"unknown_symbol_$sym_B2")
-      //   val sym_B3_name = symbolMap.find(_._2 == sym_B3).map(_._1).getOrElse(s"unknown_symbol_$sym_B3")
-      //   // rules_3 += ((symbolMap(sym_A_name+"_poly_open_"+i),symbolMap(sym_B1_name+"_poly_open_"+i), sym_B2, sym_B3))
-      //   // rules_3 += ((sym_A,symbolMap(sym_B1_name+"_poly_open_"+i), symbolMap(sym_B2_name+"_poly_close_"+i), sym_B3))
-      //   // rules_3 += ((symbolMap(sym_A_name+"_poly_open_"+i),symbolMap(sym_B1_name+"_poly_open_"+i), symbolMap(sym_B2_name+"_poly_open_"+i), symbolMap(sym_B3_name+"_poly_close_"+i)))
-      //   // rules_3 += ((sym_A,symbolMap(sym_B1_name+"_poly_open_"+i),sym_B2 , symbolMap(sym_B3_name+"_poly_close_"+i)))
-      //   // rules_3 += ((symbolMap(sym_A_name+"_poly_open_"+i),sym_B1, symbolMap(sym_B2_name+"_poly_open_"+i),sym_B3))
-      //   rules_3 += ((sym_A, sym_B1, symbolMap(sym_B2_name+"_poly_open_"+i), symbolMap(sym_B3_name+"_poly_close_"+i)))
-      //   rules_3 += ((symbolMap(sym_A_name+"_poly_open_"+i),sym_B1,sym_B2, symbolMap(sym_B3_name+"_poly_open_"+i)))
-      // }
+      
 
      
       i += 1
@@ -526,7 +509,6 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
           }
          
          
-        //  rules_2 += ((symbolMap(sym_A_name+"_poly_open_"+i),symbolMap(sym_B1_name+"_poly_open_"+i), sym_B2))
       }
   
     var num_syms = symbolMap.size
@@ -540,17 +522,11 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     val cols = ArrayBuffer.fill(num_types, num_syms*3)(new FastSet(num_types))
     val rows = ArrayBuffer.fill(num_types, num_syms*3)(new FastSet(num_types))
     // construct the adjacency matrix
-    
-    // println("typesArray: %s\n", typesArray)
-    /** Copies a type up to its type variables of wrong level (and their extruded bounds). */
-  
-
+   
     def cflConstrain(i:Int, j: Int, sub: Boolean, poly: Boolean) = {
-      // println("cflConstrain: ", typesArray(i), typesArray(j), sub, poly)
     
     if (i!=j){
           // if i is variable
-          // if (typesArray(i).isInstanceOf[Variable]&& !typesArray(j).isInstanceOf[Variable]){
           if (!typesArray(i).isInstanceOf[Variable] && !typesArray(j).isInstanceOf[Variable]){
             if (!(typesArray(i).isInstanceOf[Function] && typesArray(j).isInstanceOf[Function])){
               if (!(typesArray(i).isInstanceOf[Record] && typesArray(j).isInstanceOf[Record])){
@@ -583,50 +559,26 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
           }
 
           if (typesArray(i).isInstanceOf[Variable]){
-            // val v = typesArray(i).asInstanceOf[Variable]
-            // val ty = typesArray(j)
             if (sub)
+              
             typesArray(i).asInstanceOf[Variable].upperBounds ::= typesArray(j)
             else{
               if (!typesArray(j).isInstanceOf[Variable]){
                 typesArray(i).asInstanceOf[Variable].lowerBounds ::= typesArray(j)
               }
-              // if (typesArray(j).isInstanceOf[Variable]){
-              //   if (!typesArray(j).asInstanceOf[Variable].upperBounds.contains(typesArray(i))){
-              //     typesArray(i).asInstanceOf[Variable].lowerBounds ::= typesArray(j)
-              //   }
-
-              // }
             }
             
           }
-          // if j is variable
-          // if (typesArray(j).isInstanceOf[Variable] && !typesArray(i).isInstanceOf[Variable]){
-          //   // val v = typesArray(j).asInstanceOf[Variable]
-          //   // val ty = typesArray(i)
-          //   if (sub)
-          //   typesArray(j).asInstanceOf[Variable].lowerBounds ::= typesArray(i)
-          //   else 
-          //     typesArray(j).asInstanceOf[Variable].upperBounds ::= typesArray(i)
-          //   // W.push((j, symbolMap("rev"), i))
-          //   //   H_s += ((j, symbolMap("rev"), i))
-          //   //   cols(i)(symbolMap("rev")).insert(j)
-          //   //   rows(j)(symbolMap("rev")).insert(i)
-            
-          // }
+          
         }
 
       
   }
 
-    // println("rels: %s\n", rels)
+  
 
-    // for ((lhs,sym,rhs) <- rels.toSeq.reverse){
     rels.foreach{case (lhs, sym, rhs) =>
       val i = reverseTypesMap(lhs)
-      // println("lhs: %s\n", lhs)
-      // println("sym: ", symbolMap.find(_._2 == sym).map(_._1).getOrElse(s"unknown_symbol_$sym"))
-      // println("rhs: %s\n", rhs)
       val j = reverseTypesMap(rhs)
       if (i==(-1)){
         println("not found i", lhs)
@@ -644,11 +596,6 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     }
    
 
-    // typesArray.zipWithIndex.foreach{case (ty, i) =>
-    //   W.push((i, symbolMap("S"), i))
-    //   cols(i)(symbolMap("S")).insert(i)
-    //   rows(i)(symbolMap("S")).insert(i)
-    // }
 
     H_s ++= W
     W.reverse
@@ -658,16 +605,12 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
 
     
 
-    // println(W)
-    // for ((i, sym, j) <- W){
-    //   val sym_name = symbolMap.find(_._2 == sym).map(_._1).getOrElse(s"unknown_symbol_$sym")
-    //   println("sym_name: ", sym_name, "i: ", "j:", j)
-    // }
+    
 
     while (W.nonEmpty){
       val (u,sym_B,v) = W.pop()
       val sym_B_name = symbolMap.find(_._2 == sym_B).map(_._1).getOrElse(s"unknown_symbol_$sym_B")
-      // println( sym_B_name,  u,  v)
+      
 
       rules_1.foreach{case (sym_A, sym_B1) =>
         if (sym_B1==sym_B) {
@@ -686,19 +629,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         if (sym_B2==sym_B) {
           for (w <- cols(u)(sym_B1).diff(cols(v)(sym_A))){
             if (sym_A==symbolMap("S"))  cflConstrain(w, v, true, false)
-            // else{
-            //   val sym_A_name = symbolMap.find(_._2 == sym_A).map(_._1).getOrElse(s"unknown_symbol_$sym_A")
-            //   if (sym_A_name.startsWith("S_poly_open")){
-            //     cflConstrain(w, v, true,true)
-            //   }
-            // }
             if (sym_A==symbolMap("R")) cflConstrain(w, v, false,false)
-            // else{
-            //   val sym_A_name = symbolMap.find(_._2 == sym_A).map(_._1).getOrElse(s"unknown_symbol_$sym_A")
-            //   if (sym_A_name.startsWith("R_poly_open")){
-            //     cflConstrain(w, v, false,true)
-            //   }
-            // }
                 
 
             W.push((w, sym_A, v))
@@ -718,19 +649,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         if (sym_B1==sym_B) {
           for (w <- rows(v)(sym_B2).diff(rows(u)(sym_A))){
             if (sym_A==symbolMap("S")) cflConstrain(u, w, true,false)
-            // else{
-            //   val sym_A_name = symbolMap.find(_._2 == sym_A).map(_._1).getOrElse(s"unknown_symbol_$sym_A")
-            //   // if (sym_A_name.startsWith("S_poly_open")){
-            //   //   cflConstrain(u, w, true, true)
-            //   // }
-            // }
             if (sym_A==symbolMap("R")) cflConstrain(u, w, false, false)
-            // else{
-            //   val sym_A_name = symbolMap.find(_._2 == sym_A).map(_._1).getOrElse(s"unknown_symbol_$sym_A")
-            //   // if (sym_A_name.startsWith("R_poly_open")){
-            //   //   cflConstrain(u, w, false,true)
-            //   // }
-            // }
             
             W.push((u, sym_A, w))
             H_s += ((u, sym_A, w))
@@ -747,42 +666,9 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       
     }
 
-    // for ((u,sym_A,v) <- H_s){
-    //   val sym_A_name = symbolMap.find(_._2 == sym_A).map(_._1).getOrElse(s"unknown_symbol_$sym_A")
-    //   println(typesArray(u), sym_A_name, typesArray(v))
-    // }
-
-
-
-    // handle polymorphic types
-    // loop through SymbolMap
-    // val PolySymMap = MutMap.empty[String, Int]
-    // // val num_syms = symbolMap.size
-    // val originalNumSyms = symbolMap.size
     
-    // for ((sym, i) <- symbolMap){
-    //   PolySymMap += (sym+"_poly" -> (i+num_syms))
-    // }
-    // num_syms += num_syms
-    // symbolMap ++= PolySymMap
-    // symbolMap+= ("inst_to_poly" -> (num_syms+1))
-    // symbolMap+= ("poly_to_inst" -> (num_syms+2))
-    // num_syms += 2
-
-    // for ((sym, i) <- symbolMap){
-    //   if (i<originalNumSyms){
-    //     rules_2 += ((i, symbolMap("inst_to_poly"), i+originalNumSyms))
-    //     rules_2 += ((symbolMap("inst_to_poly"), i , i+originalNumSyms))
-    //     rules_2 += ((i, symbolMap("inst_to_poly"), i))
-    //     rules_2 += ((symbolMap("inst_to_poly"), i, i))
-    //     rules_2 += ((i+originalNumSyms, symbolMap("poly_to_inst"), i))
-
-    //   }
-      
-    // }
-
     // restore original symbol map
-    symbolMap = original_symbolMap.clone()
+    // symbolMap = original_symbolMap.clone()
     
 
 
@@ -792,49 +678,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
   }
 
   
-  /** Constrains the types to enforce a subtyping relationship `lhs` <: `rhs`. */
-  // def constrain(lhs: SimpleType, rhs: SimpleType)
-  //     // we need a cache to remember the subtyping tests in process; we also make the cache remember
-  //     // past subtyping tests for performance reasons (it reduces the complexity of the algoritghm)
-  //     (implicit cache: MutSet[(SimpleType, SimpleType)] = MutSet.empty)
-  // : Unit = {
-  //   if (lhs is rhs) return
-  //   val lhs_rhs = lhs -> rhs
-  //   lhs_rhs match {
-  //     // There is no need to remember the subtyping tests performed that did not involve
-  //     // type variables, as type variables will necessary be part of any possible cycles.
-  //     // Since these types form regular trees, there will necessarily be a point where a
-  //     // variable part of a cycle will be matched against the same type periodically.
-  //     case (_: Variable, _) | (_, _: Variable) =>
-  //       if (cache(lhs_rhs)) return
-  //       cache += lhs_rhs
-  //     case _ => ()
-  //   }
-  //   lhs_rhs match {
-  //     case (Function(l0, r0), Function(l1, r1)) =>
-  //       constrain(l1, l0)
-  //       constrain(r0, r1)
-  //     case (Record(fs0), Record(fs1)) =>
-  //       fs1.foreach { case (n1, t1) =>
-  //         fs0.find(_._1 === n1).fold(
-  //           err(s"missing field: $n1 in ${lhs.show}")
-  //         ) { case (n0, t0) => constrain(t0, t1) }
-  //       }
-  //     case (lhs: Variable, rhs) if rhs.level <= lhs.level =>
-  //       lhs.upperBounds ::= rhs
-  //       lhs.lowerBounds.foreach(constrain(_, rhs))
-  //     case (lhs, rhs: Variable) if lhs.level <= rhs.level =>
-  //       rhs.lowerBounds ::= lhs
-  //       rhs.upperBounds.foreach(constrain(lhs, _))
-  //     case (_: Variable, rhs0) =>
-  //       val rhs = extrude(rhs0, false)(lhs.level, MutMap.empty)
-  //       constrain(lhs, rhs)
-  //     case (lhs0, _: Variable) =>
-  //       val lhs = extrude(lhs0, true)(rhs.level, MutMap.empty)
-  //       constrain(lhs, rhs)
-  //     case _ => err(s"cannot constrain ${lhs.show} <: ${rhs.show}")
-  //   }
-  // }
+  
   
   type PolarVariable = (Variable, Boolean)
   
@@ -857,20 +701,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
             freshened += tv -> v
             types += v
 
-            // v.lowerBounds = tv.lowerBounds.mapConserve(freshen)
-            // v.upperBounds = tv.upperBounds.mapConserve(freshen)
-            //  ^ the above are more efficient, but they lead to a different order
-            //    of fresh variable creations, which leads to some types not being
-            //    simplified the same when put into the RHS of a let binding...
-            // v.lowerBounds = tv.lowerBounds.reverse.map(freshen(_, rels, types)).reverse
-            // v.upperBounds = tv.upperBounds.reverse.map(freshen(_, rels, types)).reverse
-            // v.lowerBounds.foreach(lb => {
-            //   rels += ((v, symbolMap("rev"), lb))
-            // })
-            // v.upperBounds.foreach(ub => {
-            //   rels += ((v, symbolMap("empty"), ub))
-            // })
-
+            
             val relsSeq = rels.toSeq
             val relsToAdd = MutSet[(SimpleType, Int, SimpleType)]()
             for (rel <- relsSeq.reverse){
@@ -941,29 +772,22 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     freshen(ty,rels, types)
   }
   
-  def polyInstantiate( poly_body: SimpleType, mono_types: Set[(SimpleType)], poly_vars: Set[(SimpleType)], isrec: Boolean)(implicit rels: MutSet[(SimpleType, Int, SimpleType)], types: MutSet[(SimpleType)], polyRels:MutSet[(SimpleType,SimpleType)]) : SimpleType={
+  def polyInstantiate( poly_body: SimpleType, mono_types: Set[(SimpleType)], poly_vars: Set[(SimpleType)], isrec: Boolean)(implicit rels: MutSet[(SimpleType, Int, SimpleType)], types: MutSet[(SimpleType)], polyRels: MutSet[(SimpleType,SimpleType)]) : SimpleType={
     val copied_poly_vars = MutMap.empty[Variable, Variable]
     val copied = MutMap.empty[Variable, Variable]
     val copied_fun = MutMap.empty[Function, Function]
     val copied_recs = MutMap.empty[Record, Record]
-    // val copiedFunc = MutMap.empty[Function, Function]
-    // for (ty <- types) {
-    //   if (ty.isInstanceOf[Variable]) {
-    //     val v = ty.asInstanceOf[Variable]
-    //     copied += v -> v
-    //   }
-    // }
+    
     var caller = poly_body
+    val new_rels = MutSet.empty[(SimpleType, Int, SimpleType)]
     def copyBody(ty: SimpleType): SimpleType = {
-      // println("copying body", ty)
       var copy = false
       val prev_caller = caller
       caller = ty
-    val inst_ty =ty match {
+    val inst_ty = ty match {
       case tv: Variable =>
         copied.get(tv) match {
           case Some(tv) => {
-            // copy = false
             tv
           }
           case None =>
@@ -995,11 +819,8 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
             types += l1
             types += r1
             val inst_body = Function(l1,r1)
-            rels += ((l1, symbolMap("f_in("), inst_body))
-            rels += ((inst_body, symbolMap("f_in)"), l1))
-            rels += ((r1, symbolMap("f_out("), inst_body))
-            rels += ((inst_body, symbolMap("f_out)"), r1))
             if (l1!= l || r1 != r) {
+            
               copy = true
               copied_fun += Function(l, r) -> inst_body
               types += inst_body
@@ -1011,6 +832,7 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         copied_recs.get(Record(fs)) match {
           case Some(rec_ty) => rec_ty
           case None =>
+           
             val fs_ty = fs.map { case (n, t) =>{
             val copyBody_t= copyBody(t)
             if (copyBody_t != t) copy = true
@@ -1033,8 +855,6 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
               symbolMap += ("rec_"+n+")" -> closeSym)
             }
             
-            rels += ((t, openSym, inst_body))
-            rels += ((inst_body, closeSym, t))
             types += t
             
             fieldSet += n 
@@ -1048,55 +868,33 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       case Primitive(_) => ty
     }
     if (copy){
+      
       for ((u,sym,v) <- rels){
-        // if (u==ty && mono_types.contains(v)){
-        //   rels += ((inst_ty, sym, v))
-        // }
-        // if (v==ty && mono_types.contains(u)){
-        //   rels += ((u, sym, inst_ty))
-        // }
         if (u==ty ){
-          rels += ((inst_ty, sym, copyBody(v)))
+          val copied_v = copyBody(v)
+          new_rels += ((inst_ty, sym, copied_v))
         }
         if (v==ty ){
-          rels += ((copyBody(u), sym, inst_ty))
+          val copied_u = copyBody(u)
+          if (copied_u == u){
+            new_rels += ((copied_u, sym, inst_ty))
+          }
         }
 
 
       }
-      if (inst_ty.isInstanceOf[Variable]){
-        // add the lower and upper bounds from the original var
-        val v = inst_ty.asInstanceOf[Variable]
-        ty.asInstanceOf[Variable].lowerBounds.foreach(lb => {
-          v.lowerBounds ::= copyBody(lb)
-          // rels += ((v, symbolMap("rev"), copyBody(lb)))
-        })
-        ty.asInstanceOf[Variable].upperBounds.foreach(ub => {
-          v.upperBounds ::= copyBody(ub)
-          // rels += ((v, symbolMap("empty"), copyBody(ub)))
-        })
-
-      }
+      
     }
 
     inst_ty
   }
-    // for (poly_var<-poly_vars){
-    //   copied_poly_vars.get(poly_var.asInstanceOf[Variable]) match {
-    //     case Some(tv) => ()
-    //     case None =>
-    //       val v = freshVar
-    //       copied_poly_vars += poly_var.asInstanceOf[Variable] -> v
-    //       types += v
-    //   }
-    // }
+    
     val tyv = copyBody(poly_body)
-    polyRels+= ((tyv, poly_body))
-    // if (isrec){
-    //   rels += ((tyv, symbolMap("empty"), poly_body))
-    //   rels += ((tyv, symbolMap("rev"), poly_body))
-    // }
 
+    polyRels+= ((tyv, poly_body))
+    
+
+    rels ++= new_rels
     tyv
 
   }

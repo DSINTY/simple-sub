@@ -120,8 +120,11 @@ class TypingTests extends TypingTestHelpers {
     // MLsub: ((((int & a) -> a) -> b) -> b)
     
     // Adapted to exhibit a problem if we use the old extrusion algorithm:
+    // doTest("fun k -> let test = k (fun x -> let tmp = add x 1 in if true then x else 2) in test",
+    //   "((int -> int) -> 'a) -> 'a")
+    // in this example our algorithm give us the same output as MLsub instead of simple-sub
     doTest("fun k -> let test = k (fun x -> let tmp = add x 1 in if true then x else 2) in test",
-      "((int -> int) -> 'a) -> 'a")
+      "(('a INTER int -> 'a UNION int) -> 'b) -> 'b")
     // MLsub: ((((int & a) -> (int | a)) -> b) -> b)
     
     // Example loss of polymorphism due to extrusion – the identity function becomes less polymorphic:
