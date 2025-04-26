@@ -6,9 +6,9 @@ class IsolatedTests extends TypingTestHelpers {
   // This test class is for isolating single tests and running them alone
   // with sbt command `~testOnly simplesub.IsolatedTests`
 
-  test("isolated") {
-        doTest("fun k -> let test = (fun thefun -> {l=k thefun; r=thefun 1}) (fun x -> let tmp = add x 1 in x) in test")
-  }
+  // test("isolated") {
+  //       doTest("let x1 = fun y -> {a = y; b = y} in let x2 = fun y -> x1(x1 y) in let x3 = fun y -> x2(x2 y) in let x4 = fun y -> x3 (x3 y) in let x5 = fun y -> x4 (x4 y) in x5(fun z-> z)")
+  // }
 
   // test("monoEquiv"){
   //   doTest("fun y -> fun x -> y x")

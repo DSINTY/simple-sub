@@ -2,60 +2,13 @@ package simplesub
 
 import scala.collection.mutable
 import scala.collection.mutable.Stack
-import scala.collection.mutable.{Map => MutMap, Set => MutSet}
+import scala.collection.mutable.{Map => MutMap, Set => MutSet, BitSet}
 import scala.collection.immutable.{SortedSet, SortedMap}
 import scala.util.chaining._
 import scala.annotation.tailrec
 import javax.management.openmbean.SimpleType
 import scala.collection.mutable.ArrayBuffer
 import scala.annotation.elidable
-
-class FastSet(n: Int) {
-  // Word size is fixed at 64 bits using Long
-  private val WORD_SIZE = 64
-  // Number of words needed: ceil(n / WORD_SIZE)
-  private val numWords = (n + WORD_SIZE - 1) / WORD_SIZE
-  // Bit vector initialized with all bits set to 0
-  private val bits = Array.fill(numWords)(0L)
-
-  /** Inserts an element x into the set. */
-  def insert(x: Int): Unit = {
-    if (x < 0 || x >= n) throw new IndexOutOfBoundsException(s"Element $x out of bounds [0, $n)")
-    val wordIndex = x / WORD_SIZE
-    val bitPos = x % WORD_SIZE
-    bits(wordIndex) |= (1L << bitPos)  // Set the bit at position bitPos in the word
-  }
-
-  /** Updates this set to be the union of this set and other. */
-  def assignUnion(other: FastSet): Unit = {
-    require(other.numWords == numWords, "Sets must have the same universe size")
-    for (i <- 0 until numWords) {
-      bits(i) |= other.getBits(i)  // Use getBits to access other's bits
-    }
-  }
-
-  /** Returns a list of elements in this set but not in other (X \ Y). */
-  def diff(other: FastSet): List[Int] = {
-    require(other.numWords == numWords, "Sets must have the same universe size")
-    val result = ArrayBuffer[Int]()
-    for (i <- 0 until numWords) {
-      // Compute Z = X & ~Y for the current word
-      var z = bits(i) & ~other.getBits(i)  // Use getBits to access other's bits
-      while (z != 0) {
-        val pos = java.lang.Long.numberOfTrailingZeros(z)  // Find least significant 1 bit
-        val elem = i * WORD_SIZE + pos  // Calculate element index
-        if (elem < n) {  // Ensure we don’t include unused bits beyond n
-          result += elem
-        }
-        z &= z - 1  // Turn off the least significant 1 bit
-      }
-    }
-    result.toList  // Convert to immutable List as required
-  }
-
-  // Renamed method to avoid ambiguity with the bits field
-  private def getBits(i: Int): Long = bits(i)
-}
 
 final case class TypeError(msg: String) extends Exception(msg)
 
@@ -219,7 +172,6 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         types += a_ty
         types += Function(a_ty, res)
         
-       
         rels += ((a_ty, symbolMap("f_in("), Function(a_ty, res)))
         rels += ((Function(a_ty, res), symbolMap("f_in)"), a_ty))
         rels += ((Function(a_ty, res), symbolMap("f_out)"), res))
@@ -301,8 +253,6 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
 
     }
     types += tyv
-
-
     (tyv, rels, types, polyRels)
   }
 
@@ -329,20 +279,14 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
     types += Function(primType, primType)
     types += primType
    }
-
     rels += ((IntType, symbolMap("f_in("), Function(IntType, Function(IntType, IntType))))
     rels += ((Function(IntType, Function(IntType, IntType)), symbolMap("f_in)"), IntType))
     rels += ((Function(IntType, Function(IntType, IntType)), symbolMap("f_out)"), Function(IntType, IntType)))
     rels += ((Function(IntType, IntType), symbolMap("f_out("), Function(IntType, Function(IntType, IntType))))
     types += Function(IntType, Function(IntType, IntType))
 
-   
-
     val typesArray = types.to(ArrayBuffer)
     val reverseTypesMap: MutMap[SimpleType, Int] = typesArray.zipWithIndex.to(MutMap)
-
-
-    
 
     for (N <- Seq("R","S")){
       val N_sym = symbolMap(N)
@@ -356,7 +300,6 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
 
       }
     }
-
     // convert rules_3 into rules_2
     val NonTermSyms = MutSet[String]("S","R")
     for (rule_3<- rules_3){
@@ -368,14 +311,10 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       NonTermSyms += (sym_B1_name+sym_B2_name)
       rules_2 += ((current_N, sym_B1, sym_B2))
       rules_2 += ((sym_A, current_N, sym_B3))
-
-
     }
-
     // for each rule, add the corresponding polymorphic rule
     val symbolMap_backup = symbolMap.clone()
     val rels_backup = rels.clone()
-
     val poly_symbolMap = MutMap.empty[String,Int]
     var i = 0
     val original_rules_2 = rules_2.clone()
@@ -386,7 +325,6 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       symbolMap += ("poly_epsilon_"+i)->symMapSize
       symbolMap += ("poly_delta_"+i)->(symMapSize+1)
       rels += ((polyRel._1,symMapSize,polyRel._2 ))
-      
       rels += ((polyRel._2,symMapSize+1,polyRel._1 ))
 
       val current_symMap_size = symbolMap.size
@@ -396,36 +334,21 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         poly_symbolMap += (symName+"_poly_close_"+i)->(current_symMap_size+j*2+1)
         rules_2 += ((current_symMap_size+j*2, j, symMapSize), (current_symMap_size+j*2, symMapSize, j))
         rules_2 += ((current_symMap_size+j*2+1, j, symMapSize+1), (current_symMap_size+j*2+1, symMapSize+1, j))
-        // rules_1 += ((j,current_symMap_size+j*2))
-
-
       }
-      
-      
       symbolMap ++= poly_symbolMap
       rels += ((polyRel._1,symbolMap(("R_poly_open_"+i)),polyRel._2 ))
       rels += ((polyRel._2,symbolMap(("R_poly_close_"+i)),polyRel._1 ))
       for ((sym_A,sym_B1,sym_B2)<-original_rules_2){
-        
          val sym_A_name = symbolMap.find(_._2 == sym_A).map(_._1).getOrElse(s"unknown_symbol_$sym_A")
          val sym_B1_name = symbolMap.find(_._2 == sym_B1).map(_._1).getOrElse(s"unknown_symbol_$sym_B1")
          val sym_B2_name = symbolMap.find(_._2 == sym_B2).map(_._1).getOrElse(s"unknown_symbol_$sym_B2")
          rules_2 += ((sym_A,symbolMap(sym_B1_name+"_poly_open_"+i), symbolMap(sym_B2_name+"_poly_close_"+i)))
-      }
-      
-     
-
-      
-
-     
+      }     
       i += 1
-
     }
-
     val num_inst = i
     // generate all possible permutations of num_inst
     val numbers = (0 until num_inst).toList
-    
     // Get all possible lengths (from 1 to n)
     val perms = (1 to num_inst).flatMap { length =>
       // Get all combinations of given length
@@ -434,21 +357,17 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
         combo.permutations.toList
       }.toList
     }.toList
-
     val num_perms = perms.size
     var curMapSize = symbolMap.size
     for (nonTermSym <- NonTermSyms){
       for (i <- 0 until num_perms){
         val perm = perms(i)
         if (perm.size!=1) {
-          
           symbolMap+= (nonTermSym + "_poly_open_path_" +i)-> curMapSize
           curMapSize += 1
         }
-
       }
     }
-
     for  ((sym_A,sym_B1,sym_B2)<-original_rules_2){
          val sym_A_name = symbolMap.find(_._2 == sym_A).map(_._1).getOrElse(s"unknown_symbol_$sym_A")
          val sym_B1_name = symbolMap.find(_._2 == sym_B1).map(_._1).getOrElse(s"unknown_symbol_$sym_B1")
@@ -456,12 +375,9 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
           var num_pos_perms = 0
          if (NonTermSyms.contains(sym_A_name))  num_pos_perms = num_perms
          else num_pos_perms = num_inst
-
           for (i <- 0 until num_pos_perms){
-
             val perm = perms(i)
             val perm_size = perm.size
-            // if (perm.size!=1) {
               for (cut<-0 to perm_size){
                 val afterCut = perm.slice(cut, perm_size)
                 val afterCutSize = perm_size - cut
@@ -491,7 +407,6 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
                   else sym_A_poly_name = sym_A_name+"_poly_open_path_"+i
                   rules_2 += ((symbolMap(sym_A_poly_name),symbolMap(lhs_name), symbolMap(rhs_name)))
                 }
-
               }
               for (j <- 0 until num_inst){
                 if (!perm.contains(j)){
@@ -500,117 +415,77 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
                   var sym_A_poly_name = ""
                   if (perm_size==1) sym_A_poly_name = sym_A_name+"_poly_open_"+perm(0)
                   else sym_A_poly_name = sym_A_name+"_poly_open_path_"+i
-
                   if (NonTermSyms.contains(sym_B1_name))rules_2 += ((symbolMap(sym_A_poly_name),symbolMap(sym_B1_name+"_poly_open_path_"+index), symbolMap(sym_B2_name+"_poly_close_"+j)))
                 }
               }
-            // }
-
           }
-         
-         
       }
-  
+
     var num_syms = symbolMap.size
     val num_types = types.size
 
-
-    
-    // initialize  a stack
     val W = Stack[(Int, Int, Int)]()
     val H_s = MutSet[(Int, Int, Int)]()
-    val cols = ArrayBuffer.fill(num_types, num_syms*3)(new FastSet(num_types))
-    val rows = ArrayBuffer.fill(num_types, num_syms*3)(new FastSet(num_types))
-    // construct the adjacency matrix
+    val cols = ArrayBuffer.fill(num_types, num_syms*3)(new BitSet(num_types))
+    val rows = ArrayBuffer.fill(num_types, num_syms*3)(new BitSet(num_types))
    
     def cflConstrain(i:Int, j: Int, sub: Boolean, poly: Boolean) = {
     
     if (i!=j){
-          // if i is variable
-          if (!typesArray(i).isInstanceOf[Variable] && !typesArray(j).isInstanceOf[Variable]){
-            if (!(typesArray(i).isInstanceOf[Function] && typesArray(j).isInstanceOf[Function])){
-              if (!(typesArray(i).isInstanceOf[Record] && typesArray(j).isInstanceOf[Record])){
-                err(s"cannot constrain ${typesArray(i).show} <: ${typesArray(j).show}")
+          (typesArray(i), typesArray(j)) match {
+          case (r1: Record, r2: Record) =>
+            val i_fields = r1.fields
+            val j_fields = r2.fields
+            if (sub) {
+              for (j_field <- j_fields) {
+                if (!i_fields.exists(_._1 == j_field._1)) {
+                  err(s"missing field: ${j_field._1} in ${r1.show}")
+                }
               }
-            }
-          }
-
-          // Check for missing field for record types
-          if (typesArray(i).isInstanceOf[Record] && typesArray(j).isInstanceOf[Record]){
-            val i_fields = typesArray(i).asInstanceOf[Record].fields
-            val j_fields = typesArray(j).asInstanceOf[Record].fields
-            if (sub){
-              for (j_field <- j_fields){
-                // if not second entry of i_fields contains j_field._1
-                if (!i_fields.exists(_._1 == j_field._1)){
-                  err(s"missing field: ${j_field._1} in ${typesArray(i).show}")
+            } else {
+              for (i_field <- i_fields) {
+                if (!j_fields.exists(_._1 == i_field._1)) {
+                  err(s"missing field: ${i_field._1} in ${r2.show}")
                 }
               }
             }
-            else{
-              for (i_field <- i_fields){
-                // if not second entry of i_fields contains j_field._1
-                if (!j_fields.exists(_._1 == i_field._1)){
-                  err(s"missing field: ${i_field._1} in ${typesArray(j).show}")
-                }
-              }
-
-            }
-          }
-
-          if (typesArray(i).isInstanceOf[Variable]){
-            if (sub)
-              
-            typesArray(i).asInstanceOf[Variable].upperBounds ::= typesArray(j)
-            else{
-              if (!typesArray(j).isInstanceOf[Variable]){
-                typesArray(i).asInstanceOf[Variable].lowerBounds ::= typesArray(j)
+          // Case where i is a Variable
+          case (v: Variable, tj) =>
+            if (sub) {
+              v.upperBounds ::= tj
+            } else {
+              tj match {
+                case _: Variable => // Do nothing
+                case _ => v.lowerBounds ::= tj
               }
             }
-            
-          }
-          
+          case (ti, v: Variable) => // do nothing, valid case
+          case  (f1: Function, v: Function) =>  //do nothing, valid case
+          case (ti,tj) => err(s"cannot constrain ${ti.show} <: ${tj.show}")
         }
-
-      
+        }
   }
 
-  
-
     rels.foreach{case (lhs, sym, rhs) =>
-      val i = reverseTypesMap(lhs)
-      val j = reverseTypesMap(rhs)
+      val i = typesArray.indexOf(lhs)
+      val j = typesArray.indexOf(rhs)
       if (i==(-1)){
         println("not found i", lhs)
       }
       if (j==(-1)){
         println("not found j", lhs)
-
       }
       
         W.push((i, sym, j))
-        cols(j)(sym).insert(i)
-        rows(i)(sym).insert(j)
-      // }
-      
+        cols(j)(sym) += i
+        rows(i)(sym) += j
     }
    
-
-
     H_s ++= W
-    W.reverse
-
-
-    
-
-    
-
-    
 
     while (W.nonEmpty){
       val (u,sym_B,v) = W.pop()
       val sym_B_name = symbolMap.find(_._2 == sym_B).map(_._1).getOrElse(s"unknown_symbol_$sym_B")
-      
 
       rules_1.foreach{case (sym_A, sym_B1) =>
         if (sym_B1==sym_B) {
@@ -618,11 +493,9 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
           if (sym_A==symbolMap("R")) cflConstrain(u, v, false, false)
           W.push((u, sym_A, v))
           H_s += ((u, sym_A, v))
-          cols(v)(sym_A).insert(u)
-          rows(u)(sym_A).insert(v)
-            
+          cols(v)(sym_A) += u
+          rows(u)(sym_A) += v
         }
-
       }
 
       rules_2.foreach{case (sym_A, sym_B1, sym_B2) =>
@@ -630,22 +503,12 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
           for (w <- cols(u)(sym_B1).diff(cols(v)(sym_A))){
             if (sym_A==symbolMap("S"))  cflConstrain(w, v, true, false)
             if (sym_A==symbolMap("R")) cflConstrain(w, v, false,false)
-                
-
             W.push((w, sym_A, v))
             H_s += ((w, sym_A, v))
-            cols(v)(sym_A).insert(w)
-            rows(w)(sym_A).insert(v)
-              
-            
-            
-
+            cols(v)(sym_A) += w
+            rows(w)(sym_A) += v
           }
         }
-
-      }
-
-      rules_2.foreach{case (sym_A, sym_B1, sym_B2) =>
         if (sym_B1==sym_B) {
           for (w <- rows(v)(sym_B2).diff(rows(u)(sym_A))){
             if (sym_A==symbolMap("S")) cflConstrain(u, w, true,false)
@@ -653,32 +516,14 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
             
             W.push((u, sym_A, w))
             H_s += ((u, sym_A, w))
-            cols(w)(sym_A).insert(u)
-            rows(u)(sym_A).insert(w)
-              
-            
-            
+            cols(w)(sym_A) += u
+            rows(u)(sym_A) += w
           }
         }
-
       }
-
-      
-    }
-
-    
-    // restore original symbol map
-    // symbolMap = original_symbolMap.clone()
-    
-
-
-
+      }
     ty
-    
   }
-
-  
-  
   
   type PolarVariable = (Variable, Boolean)
   
@@ -689,88 +534,6 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
   private var freshCount = 0
   def freshVar(implicit lvl: Int=0): Variable = new Variable(lvl, Nil, Nil)
   
-  def freshenAbove(lim: Int, ty: SimpleType,rels: MutSet[(SimpleType, Int, SimpleType)],types: MutSet[(SimpleType)])(implicit lvl: Int): SimpleType = {
-    val freshened = MutMap.empty[Variable, Variable]
-    val freshened_fun = MutMap.empty[Function, Function]
-    def freshen(ty: SimpleType,rels: MutSet[(SimpleType, Int, SimpleType)],types: MutSet[(SimpleType)]): SimpleType = if (ty.level <= lim) ty else ty match {
-      case tv: Variable =>
-        freshened.get(tv) match {
-          case Some(tv) => tv
-          case None =>
-            val v = freshVar
-            freshened += tv -> v
-            types += v
-
-            
-            val relsSeq = rels.toSeq
-            val relsToAdd = MutSet[(SimpleType, Int, SimpleType)]()
-            for (rel <- relsSeq.reverse){
-              
-              if (rel._1==tv){
-                relsToAdd += ((v, rel._2, freshen(rel._3, rels, types)))
-              }
-              if (rel._3==tv){
-                relsToAdd += (( freshen(rel._1, rels, types), rel._2, v))
-              }
-            }
-            rels ++= relsToAdd.toSeq.reverse
-            v
-        }
-      case Function(l, r) => {
-        freshened_fun.get(Function(l, r)) match {
-          case Some(fun_ty) => fun_ty
-          case None =>
-            val freshend_l = freshen(l,rels, types)
-            val freshend_r = freshen(r,rels, types)
-            val fun_ty = Function(freshend_l,freshend_r)
-            freshened_fun += Function(l, r) -> fun_ty
-            types += fun_ty
-            for (rel <- rels){
-              if (rel._1==Function(l, r)){
-                rels += ((fun_ty, rel._2, freshen(rel._3, rels, types)))
-              }
-              if (rel._3==ty){
-                rels += (( freshen(rel._1, rels, types), rel._2, fun_ty))
-              }
-            }
-            fun_ty
-          }
-        
-      }
-      case Record(fs) =>{
-        val fs_ty = fs.map(ft => ft._1 -> freshen(ft._2,rels, types))
-        val rec_ty = Record(fs_ty)
-        fs_ty.foreach { case (n, t) => 
-          var openSym = 0
-          var closeSym = 0
-          if (symbolMap.contains("rec_" + n + "(")) 
-          {
-            openSym = symbolMap("rec_" + n + "(")
-            closeSym = symbolMap("rec_" + n + ")")
-          }
-          else
-          {
-            openSym = symbolMap.size
-            symbolMap += ("rec_"+n+"(" -> openSym)
-            closeSym = symbolMap.size
-            symbolMap += ("rec_"+n+")" -> closeSym)
-          }
-          
-          rels += ((t, openSym, rec_ty))
-          rels += ((rec_ty, closeSym, t))
-          types += t
-          
-          fieldSet += n 
-        }
-
-
-        types += rec_ty
-        rec_ty
-      } 
-      case Primitive(_) => ty
-    }
-    freshen(ty,rels, types)
-  }
   
   def polyInstantiate( poly_body: SimpleType, mono_types: Set[(SimpleType)], poly_vars: Set[(SimpleType)], isrec: Boolean)(implicit rels: MutSet[(SimpleType, Int, SimpleType)], types: MutSet[(SimpleType)], polyRels: MutSet[(SimpleType,SimpleType)]) : SimpleType={
     val copied_poly_vars = MutMap.empty[Variable, Variable]
@@ -868,7 +631,6 @@ class Typer(protected val dbg: Boolean) extends TyperDebugging {
       case Primitive(_) => ty
     }
     if (copy){
-      
       for ((u,sym,v) <- rels){
         if (u==ty ){
           val copied_v = copyBody(v)
